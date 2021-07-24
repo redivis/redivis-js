@@ -1,0 +1,16 @@
+<html>
+
+<script>
+	import('../../index.js')
+		.then(async (redivis) => {
+			console.log(redivis)
+			const rows = await redivis
+				.organization('demo')
+				.dataset('Novel Corona Virus 2019 Dataset')
+				.table('Covid 19 data')
+				.listRows(10);
+			console.log(rows);
+			document.body.innerHTML = JSON.stringify(rows)
+		});
+</script>
+</html>
