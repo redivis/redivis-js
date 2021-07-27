@@ -77,7 +77,7 @@ export async function makePaginatedRequest({ path, pageSize = 100, query = {}, m
 			query: {
 				...query,
 				maxResults:
-					maxResults === undefined || (page + 1) * page_size < max_results
+					maxResults === undefined || (page + 1) * pageSize < maxResults
 						? pageSize
 						: maxResults - page * pageSize,
 			},

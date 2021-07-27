@@ -60,23 +60,23 @@ export default class Query {
 			for (let i = 0; i < row.length; i++) {
 				if (row[i] === null) {
 					rowObject[variables[i].name] = row[i];
-					break;
-				}
-				switch (variables[i].type) {
-					case 'integer':
-						rowObject[variables[i].name] = parseInt(row[i]);
-						break;
-					case 'float':
-						rowObject[variables[i].name] = parseFloat(row[i]);
-						break;
-					case 'date':
-						rowObject[variables[i].name] = new Date(`${row[i]}T00:00:00Z`);
-						break;
-					case 'dateTime':
-						rowObject[variables[i].name] = new Date(`${row[i]}Z`);
-						break;
-					default:
-						rowObject[variables[i].name] = row[i];
+				} else {
+					switch (variables[i].type) {
+						case 'integer':
+							rowObject[variables[i].name] = parseInt(row[i]);
+							break;
+						case 'float':
+							rowObject[variables[i].name] = parseFloat(row[i]);
+							break;
+						case 'date':
+							rowObject[variables[i].name] = new Date(`${row[i]}T00:00:00Z`);
+							break;
+						case 'dateTime':
+							rowObject[variables[i].name] = new Date(`${row[i]}Z`);
+							break;
+						default:
+							rowObject[variables[i].name] = row[i];
+					}
 				}
 			}
 			return rowObject;

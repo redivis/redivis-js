@@ -65,7 +65,7 @@ export default class Table {
 
 	async listRows(limit) {
 		if (!this.variables) {
-			this.variables = await this.listVariables();
+			this.variables = await this.listVariables({ maxResults: 10000 });
 		}
 		if (!this.hasPopulatedProperties) {
 			await this.get();
@@ -81,23 +81,23 @@ export default class Table {
 			for (let i = 0; i < row.length; i++) {
 				if (row[i] === null) {
 					rowObject[this.variables[i].name] = row[i];
-					break;
-				}
-				switch (this.variables[i].type) {
-					case 'integer':
-						rowObject[this.variables[i].name] = parseInt(row[i]);
-						break;
-					case 'float':
-						rowObject[this.variables[i].name] = parseFloat(row[i]);
-						break;
-					case 'date':
-						rowObject[this.variables[i].name] = new Date(`${row[i]}T00:00:00Z`);
-						break;
-					case 'dateTime':
-						rowObject[this.variables[i].name] = new Date(`${row[i]}Z`);
-						break;
-					default:
-						rowObject[this.variables[i].name] = row[i];
+				} else {
+					switch (this.variables[i].type) {
+						case 'integer':
+							rowObject[this.variables[i].name] = parseInt(row[i]);
+							break;
+						case 'float':
+							rowObject[this.variables[i].name] = parseFloat(row[i]);
+							break;
+						case 'date':
+							rowObject[this.variables[i].name] = new Date(`${row[i]}T00:00:00Z`);
+							break;
+						case 'dateTime':
+							rowObject[this.variables[i].name] = new Date(`${row[i]}Z`);
+							break;
+						default:
+							rowObject[this.variables[i].name] = row[i];
+					}
 				}
 			}
 			return rowObject;
