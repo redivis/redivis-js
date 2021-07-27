@@ -3,21 +3,17 @@ let fetch;
 let crypto;
 let popupWindowReference;
 
-if (typeof window === 'undefined') {
-	const { webcrypto } = await import('crypto');
-	const { default: nodeFetch } = await import('node-fetch');
-	fetch = nodeFetch;
-	crypto = webcrypto;
-} else {
-	fetch = window.fetch;
-	crypto = window.crypto;
-}
-
 export async function getAuthToken({ forceReauthorization = false }) {
 	if (forceReauthorization) {
 		authToken = null;
 	} else if (!authToken) {
 		authToken = await getCachedAuthToken();
+	}
+	if (!crypto) {
+		await importCrypto();
+	}
+	if (!fetch) {
+		await importFetch();
 	}
 
 	if (authToken && new Date(authToken.expires_at * 1000) > Date.now()) {
@@ -71,6 +67,7 @@ async function setCachedAuthToken(token) {
 
 async function oAuthNode() {
 	const readline = await import('readline');
+
 	const rl = readline.createInterface({
 		input: process.stdin,
 		output: process.stdout,
@@ -137,7 +134,7 @@ async function oAuthBrowser() {
 	const redirectUri = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob:auto');
 	const state = generateRandomString();
 	const { challenge, verifier } = await getPKCE();
-	const url = `https://localhost:8443/oauth/authorize?&scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
+	const url = `https://redivis.com/oauth/authorize?&scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
 	const popupWindowSettings = 'toolbar=no,menubar=no,width=600,height=600,left=100,top=100';
 
 	return new Promise((resolve, reject) => {
@@ -158,7 +155,7 @@ async function oAuthBrowser() {
 				if (state !== finalState) {
 					throw new Error(`An error occurred during login. Inconsistent state.`);
 				}
-				const res = await fetch(`https://localhost:8443/oauth/token`, {
+				const res = await fetch(`https://redivis.com/oauth/token`, {
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
@@ -187,6 +184,28 @@ async function getPKCE() {
 	const verifier = generateRandomString();
 	const challenge = await pkceChallengeFromVerifier(verifier);
 	return { verifier, challenge };
+}
+
+async function importCrypto() {
+	if (!crypto) {
+		if (typeof window === 'undefined') {
+			const { webcrypto } = await import('crypto');
+			crypto = webcrypto;
+		} else {
+			crypto = window.crypto;
+		}
+	}
+}
+
+async function importFetch() {
+	if (!fetch) {
+		if (typeof window === 'undefined') {
+			const { default: nodeFetch } = await import('node-fetch');
+			fetch = nodeFetch;
+		} else {
+			fetch = window.fetch;
+		}
+	}
 }
 
 function generateRandomString() {

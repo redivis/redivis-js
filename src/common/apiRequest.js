@@ -1,10 +1,7 @@
 import { getAuthToken } from './auth.js';
 
 let fetch;
-if (typeof window === 'undefined') {
-	const { default: nodeFetch } = await import('node-fetch');
-	fetch = nodeFetch;
-} else {
+if (typeof window !== 'undefined') {
 	fetch = window.fetch;
 }
 
@@ -34,7 +31,10 @@ export async function makeRequest({ method, path, query, payload, forceReauthori
 	}
 
 	payload = JSON.stringify(payload);
-
+	if (!fetch) {
+		const { default: nodeFetch } = await import('node-fetch');
+		fetch = nodeFetch;
+	}
 	const response = await fetch(url, { method, headers, body: payload });
 	let parsedResponse;
 
