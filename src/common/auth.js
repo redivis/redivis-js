@@ -3,6 +3,10 @@ let fetch;
 let crypto;
 let popupWindowReference;
 
+export function authorize() {
+	return getAuthToken({ forceReauthorization: true });
+}
+
 export async function getAuthToken({ forceReauthorization = false }) {
 	if (forceReauthorization) {
 		authToken = null;
