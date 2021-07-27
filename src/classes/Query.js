@@ -53,7 +53,15 @@ export default class Query {
 		await this.#waitForFinish();
 		const maxResults =
 			limit === undefined ? this.properties.outputNumRows : Math.max(limit, this.properties.outputNumRows);
-		return await makeRowsRequest({ uri: this.uri, maxResults });
+		const rows = await makeRowsRequest({ uri: this.uri, maxResults });
+		const variables = await this.listVariables();
+		return rows.map((row) => {
+			const rowObject = {};
+			for (let i = 0; i < row.length; i++) {
+				rowObject[variables[i].name] = row[i];
+			}
+			return rowObject;
+		});
 	}
 
 	async #waitForFinish() {

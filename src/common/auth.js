@@ -146,7 +146,6 @@ async function oAuthBrowser() {
 
 		// add the listener for receiving a message from the popup
 		window.addEventListener('message', async (event) => {
-			console.log('event');
 			try {
 				if (!url.startsWith(event.origin)) {
 					throw new Error(`Invalid origin`);
