@@ -4,6 +4,7 @@ export default class Variable {
 	constructor(properties) {
 		this.properties = properties;
 		this.name = properties.name;
+		this.type = properties.type;
 	}
 	getProperty(prop) {
 		return this.properties?.[prop];

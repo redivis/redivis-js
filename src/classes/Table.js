@@ -79,7 +79,20 @@ export default class Table {
 		return rows.map((row) => {
 			const rowObject = {};
 			for (let i = 0; i < row.length; i++) {
-				rowObject[this.variables[i].name] = row[i];
+				switch (this.variables[i].type) {
+					case 'integer':
+						rowObject[this.variables[i].name] = parseInt(row[i]);
+						break;
+					case 'float':
+						rowObject[this.variables[i].name] = parseFloat(row[i]);
+						break;
+					case 'date':
+					case 'dateTime':
+						rowObject[this.variables[i].name] = new Date(`${row[i]}Z`);
+						break;
+					default:
+						rowObject[this.variables[i].name] = row[i];
+				}
 			}
 			return rowObject;
 		});
