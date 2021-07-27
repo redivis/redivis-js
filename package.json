@@ -1,12 +1,20 @@
 {
 	"name": "redivis",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "Redivis client library for javascript",
-	"main": "index.js",
-	"type": "module",
 	"scripts": {
 		"test": "node test/index.js",
-		"test-browser": "(sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000"
+		"test-browser": "(sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000",
+		"prepublishOnly": "npm run build && ./node_modules/.bin/bump --tag",
+		"build": "./node_modules/.bin/rollup index.js --format cjs --file ./dist/cjs/index.js && ./node_modules/.bin/rollup index.js --format umd --name \"redivis\" --file ./dist/umd/index.js"
+	},
+	"type": "module",
+	"main": "./dist/umd/index.js",
+	"module": "./index.js",
+	"exports": {
+		"import": "./index.js",
+		"require": "./dist/cjs/index.js",
+		"default": "./index.js"
 	},
 	"repository": {
 		"type": "git",
@@ -22,11 +30,14 @@
 	},
 	"homepage": "https://github.com/redivis/redivis-js#readme",
 	"dependencies": {
-		"keytar": "7.7.0",
-		"node-fetch": "2.6.1"
+		"keytar": "^7.7.0",
+		"node-fetch": "^2.6.1"
 	},
 	"devDependencies": {
-		"prettier": "2.3.2"
+		"@skypack/package-check": "0.2.2",
+		"prettier": "2.3.2",
+		"rollup": "2.54.0",
+		"@jsdevtools/version-bump-prompt": "6.1.0"
 	},
 	"prettier": {
 		"printWidth": 120,
