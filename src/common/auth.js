@@ -137,7 +137,7 @@ async function oAuthBrowser() {
 	const url = `https://redivis.com/oauth/authorize?&scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
 	const popupWindowSettings = 'toolbar=no,menubar=no,width=600,height=600,left=100,top=100';
 
-	return new Promise(async (resolve, reject) => {
+	return new Promise((resolve, reject) => {
 		if (!popupWindowReference || popupWindowReference?.closed) {
 			popupWindowReference = window.open(url, 'Authorize Redivis', popupWindowSettings);
 		}
@@ -146,25 +146,13 @@ async function oAuthBrowser() {
 			popupWindowReference.closed ||
 			typeof popupWindowReference.closed === 'undefined'
 		) {
-			for (let i = 0; i < 10; i++) {
-				// wait 5s (10 iterations of 500ms
-				await new Promise((resolve) => setTimeout(resolve, 500));
-				if (
-					popupWindowReference &&
-					!popupWindowReference.closed &&
-					typeof popupWindowReference.closed !== 'undefined'
-				) {
-					break;
-				}
-				if (i === 9) {
-					reject(
-						new Error(`Authentication popup was blocked by browser. Please enable popups and try again.`),
-					);
-				}
-			}
+			return reject(
+				new Error(
+					`The Redivis authentication window was blocked by the browser. Please enable popups for this page and try again.`,
+				),
+			);
 		}
 		popupWindowReference.focus();
-		window.popupWindowReference = popupWindowReference;
 
 		// add the listener for receiving a message from the popup
 		window.addEventListener('message', async (event) => {
