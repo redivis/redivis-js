@@ -170,9 +170,23 @@ async function oAuthBrowser() {
 		}
 		popupWindowReference.focus();
 
+		const popupClosedInterval = setInterval(function () {
+			if (!popupWindowReference || popupWindowReference.closed) {
+				clearInterval(popupClosedInterval);
+				window.removeEventListener('message', onMessageEventHandler);
+				return Promise.reject(
+					new Error(`The Redivis authentication window was prematurely closed. Please try again.`),
+				);
+			}
+		}, 500);
+
 		// add the listener for receiving a message from the popup
-		window.addEventListener('message', async (event) => {
+		async function onMessageEventHandler(event) {
 			try {
+				window.removeEventListener('message', onMessageEventHandler);
+
+				clearInterval(popupClosedInterval);
+
 				if (!url.startsWith(event.origin)) {
 					throw new Error(`Invalid origin`);
 				}
@@ -201,7 +215,9 @@ async function oAuthBrowser() {
 			} catch (e) {
 				reject(e);
 			}
-		});
+		}
+
+		window.addEventListener('message', onMessageEventHandler);
 	});
 }
 
