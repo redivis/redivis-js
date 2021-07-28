@@ -124,7 +124,7 @@ export default class Dataset {
 
 	async listTables({ maxResults } = {}) {
 		const tables = await makePaginatedRequest({
-			path: $`${this.uri}/tables`,
+			path: `${this.uri}/tables`,
 			pageSize: 100,
 			maxResults,
 		});
