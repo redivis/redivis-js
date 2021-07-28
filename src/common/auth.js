@@ -2,37 +2,49 @@ let authToken;
 let fetch;
 let crypto;
 let popupWindowReference;
+let currentGetAuthTokenPromise;
 
 export async function authorize() {
 	await getAuthToken({ forceReauthorization: true });
 }
 
 export async function getAuthToken({ forceReauthorization = false }) {
-	if (forceReauthorization) {
-		authToken = null;
-	} else if (!authToken) {
-		authToken = await getCachedAuthToken();
-	}
-	if (!crypto) {
-		await importCrypto();
-	}
-	if (!fetch) {
-		await importFetch();
+	if (currentGetAuthTokenPromise) {
+		if (forceReauthorization) {
+			await currentGetAuthTokenPromise;
+		} else {
+			return currentGetAuthTokenPromise;
+		}
 	}
 
-	if (authToken && new Date(authToken.expires_at * 1000) > Date.now()) {
+	currentGetAuthTokenPromise = (async function () {
+		if (forceReauthorization) {
+			authToken = null;
+		} else if (!authToken) {
+			authToken = await getCachedAuthToken();
+		}
+		if (!crypto) {
+			await importCrypto();
+		}
+		if (!fetch) {
+			await importFetch();
+		}
+
+		if (authToken && new Date(authToken.expires_at * 1000) > Date.now()) {
+			return authToken?.access_token;
+		}
+		if (typeof process !== 'undefined' && process?.env?.REDIVIS_API_TOKEN) {
+			return process.env.REDIVIS_API_TOKEN;
+		}
+		if (typeof window === 'undefined') {
+			authToken = await oAuthNode();
+		} else {
+			authToken = await oAuthBrowser();
+		}
+		await setCachedAuthToken(authToken);
 		return authToken?.access_token;
-	}
-	if (typeof process !== 'undefined' && process?.env?.REDIVIS_API_TOKEN) {
-		return process.env.REDIVIS_API_TOKEN;
-	}
-	if (typeof window === 'undefined') {
-		authToken = await oAuthNode();
-	} else {
-		authToken = await oAuthBrowser();
-	}
-	await setCachedAuthToken(authToken);
-	return authToken?.access_token;
+	})();
+	return currentGetAuthTokenPromise;
 }
 
 async function getCachedAuthToken() {
