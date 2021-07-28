@@ -174,9 +174,7 @@ async function oAuthBrowser() {
 			if (!popupWindowReference || popupWindowReference.closed) {
 				clearInterval(popupClosedInterval);
 				window.removeEventListener('message', onMessageEventHandler);
-				return Promise.reject(
-					new Error(`The Redivis authentication window was prematurely closed. Please try again.`),
-				);
+				return reject(new Error(`The Redivis authentication window was prematurely closed. Please try again.`));
 			}
 		}, 500);
 
