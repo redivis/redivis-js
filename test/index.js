@@ -11,6 +11,9 @@ async function runTests() {
 		.listRows(10);
 
 	console.log(tableRows);
+
+	const tables = await redivis.user('demo').dataset('Google Community Mobility Reports').listTables();
+	console.log(tables);
 }
 
 runTests().catch(console.error);

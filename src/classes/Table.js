@@ -3,7 +3,7 @@ import Variable from './Variable.js';
 import { makeRequest, makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
 
 export default class Table {
-	constructor(argName, options) {
+	constructor(argName, options = {}) {
 		if (typeof argName === 'object') {
 			options = argName;
 			argName = undefined;

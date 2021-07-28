@@ -28,7 +28,7 @@ export default class Project {
 		return new Table({ name, ...options, project: this });
 	}
 
-	async listTables({ maxResults, includeDatasetTables }) {
+	async listTables({ maxResults, includeDatasetTables } = {}) {
 		const tables = await makePaginatedRequest({
 			method: 'GET',
 			pageSize: 100,
