@@ -2,6 +2,9 @@ import Table from './Table.js';
 import Query from './Query.js';
 import { makeRequest, makePaginatedRequest } from '../common/apiRequest.js';
 
+// TODO: listAccess
+// TODO: finalize sample, versions
+
 export default class Dataset {
 	constructor(argName, options = {}) {
 		if (typeof argName === 'object') {

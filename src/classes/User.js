@@ -1,6 +1,9 @@
 import Dataset from './Dataset.js';
 import Project from './Project.js';
 
+// TODO: list datasets
+// TODO: list projects
+
 export default class User {
 	constructor(name) {
 		this.name = name;

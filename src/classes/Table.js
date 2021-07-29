@@ -32,7 +32,7 @@ export default class Table {
 	}
 
 	variable(name) {
-		// TODO
+		return new Variable(name, { table: this });
 	}
 
 	async exists() {
@@ -56,7 +56,7 @@ export default class Table {
 
 	async listVariables({ maxResults } = {}) {
 		let variables = await makePaginatedRequest({ path: `${this.uri}/variables`, pageSize: 1000, maxResults });
-		variables = variables.map((variable) => new Variable(variable));
+		variables = variables.map((variable) => new Variable({ ...variable, table: this }));
 		if (maxResults === undefined || variables.length < maxResults) {
 			this.variables = variables;
 		}

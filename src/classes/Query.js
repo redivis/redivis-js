@@ -46,7 +46,7 @@ export default class Query {
 
 	async listVariables() {
 		await this.#waitForFinish();
-		return this.properties.outputSchema.map((variable) => new Variable(variable));
+		return this.properties.outputSchema.map((variable) => new Variable({ ...variable, query: this }));
 	}
 
 	async listRows(limit) {
