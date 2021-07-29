@@ -1,6 +1,6 @@
 {
 	"name": "redivis",
-	"version": "0.0.17",
+	"version": "0.0.18",
 	"description": "Redivis client library for javascript",
 	"scripts": {
 		"test": "node test/index.js",
