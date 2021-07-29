@@ -1,6 +1,5 @@
-// TODO: add statistics, getRows
-
 import { makeRequest } from '../common/apiRequest.js';
+// TODO: add statistics, getRows
 
 export default class Variable {
 	constructor(argName, options = {}) {
