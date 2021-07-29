@@ -7,12 +7,12 @@ export default class Variable {
 			options = argName;
 			argName = undefined;
 		}
-		const { name = argName, type, table, query, properties = {} } = options;
+		const { name = argName, label, description, valueLabels, type, table, query, properties = {} } = options;
 		this.name = name;
 		this.type = type;
 		this.table = table;
 		this.query = query;
-		this.properties = { name, type, ...properties };
+		this.properties = { name, type, label, description, valueLabels, ...properties };
 		this.uri = `${(this.table || this.query).uri}/variables/${this.name}`;
 	}
 	getProperty(prop) {
