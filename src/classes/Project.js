@@ -11,7 +11,7 @@ export default class Project {
 		const { name = argName, user, properties } = options;
 		this.user = user;
 		this.name = name;
-		this.identifier = `${user.name}/${name}`;
+		this.identifier = `${user.name}.${name}`;
 		this.uri = `/projects/${encodeURIComponent(this.identifier)}`;
 		this.properties = properties;
 	}
