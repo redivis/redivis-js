@@ -94,8 +94,12 @@ async function oAuthNode() {
 	const redirectUri = 'urn:ietf:wg:oauth:2.0:oob';
 	const { challenge, verifier } = await getPKCE();
 
+	const baseUrl = process.env.REDIVIS_API_ENDPOINT
+		? process.env.REDIVIS_API_ENDPOINT.match(/(https:\/\/.*?)\//)[1]
+		: `https://redivis.com`;
+
 	// TODO: open browser + local server authentication flow
-	const url = `https://redivis.com/oauth/authorize?scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
+	const url = `${baseUrl}/oauth/authorize?scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
 
 	console.log(
 		`You must be logged in to perform this action. Please navigate to the following URL to get an authorization code.\n`,
@@ -109,7 +113,7 @@ async function oAuthNode() {
 				try {
 					authCode = code;
 
-					const res = await fetch(`https://redivis.com/oauth/token`, {
+					const res = await fetch(`${baseUrl}/oauth/token`, {
 						method: 'POST',
 						headers: {
 							'Content-Type': 'application/json',

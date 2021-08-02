@@ -2,6 +2,7 @@ import Upload from './Upload.js';
 import Variable from './Variable.js';
 import { makeRequest, makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
 
+// TODO: handle periods in name (properly escape) — and for all other entities
 export default class Table {
 	constructor(argName, options = {}) {
 		if (typeof argName === 'object') {
