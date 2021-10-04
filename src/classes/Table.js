@@ -64,14 +64,14 @@ export default class Table {
 		return variables;
 	}
 
-	async listRows(limit) {
+	async listRows(maxResults) {
 		if (!this.variables) {
 			this.variables = await this.listVariables({ maxResults: 10000 });
 		}
 		if (!this.hasPopulatedProperties) {
 			await this.get();
 		}
-		const maxResults = limit === undefined ? this.properties.numRows : Math.min(limit, this.properties.numRows);
+		maxResults = maxResults === undefined ? this.properties.numRows : Math.min(maxResults, this.properties.numRows);
 		const rows = await makeRowsRequest({
 			uri: this.uri,
 			maxResults,
@@ -103,10 +103,6 @@ export default class Table {
 			}
 			return rowObject;
 		});
-	}
-
-	async download() {
-		// TODO
 	}
 }
 // TODO

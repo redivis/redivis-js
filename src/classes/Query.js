@@ -49,10 +49,12 @@ export default class Query {
 		return this.properties.outputSchema.map((variable) => new Variable({ ...variable, query: this }));
 	}
 
-	async listRows(limit) {
+	async listRows(maxResults) {
 		await this.#waitForFinish();
-		const maxResults =
-			limit === undefined ? this.properties.outputNumRows : Math.max(limit, this.properties.outputNumRows);
+		maxResults =
+			maxResults === undefined
+				? this.properties.outputNumRows
+				: Math.max(maxResults, this.properties.outputNumRows);
 		const rows = await makeRowsRequest({ uri: this.uri, maxResults });
 		const variables = await this.listVariables();
 		return rows.map((row) => {

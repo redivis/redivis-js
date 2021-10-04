@@ -93,26 +93,16 @@ export async function makePaginatedRequest({ path, pageSize = 100, query = {}, m
 }
 
 export async function makeRowsRequest({ uri, maxResults, query = {} }) {
-	let rows = '';
-	let page = 0;
-	let pageSize = 100000;
+	const rows = await makeRequest({
+		method: 'GET',
+		path: `${uri}/rows`,
+		query: {
+			...query,
+			maxResults,
+			format: 'ndjson',
+		},
+	});
 
-	while (page * pageSize < maxResults) {
-		const results = await makeRequest({
-			method: 'GET',
-			path: `${uri}/rows`,
-			query: {
-				...query,
-				startIndex: page * pageSize,
-				maxResults: (page + 1) * pageSize < maxResults ? pageSize : maxResults - page * pageSize,
-			},
-		});
-		if (page !== 0) {
-			rows += '\n';
-		}
-		rows += results;
-		page += 1;
-	}
 	if (rows) {
 		return rows.split('\n').map((str) => JSON.parse(str));
 	} else {
