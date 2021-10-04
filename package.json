@@ -31,7 +31,8 @@
 	"homepage": "https://github.com/redivis/redivis-js#readme",
 	"dependencies": {
 		"keytar": "^7.7.0",
-		"node-fetch": "^2.6.1"
+		"node-fetch": "^2.6.1",
+		"papaparse": "^5.3.1"
 	},
 	"devDependencies": {
 		"@skypack/package-check": "0.2.2",

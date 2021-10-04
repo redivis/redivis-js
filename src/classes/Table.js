@@ -1,4 +1,5 @@
 import Upload from './Upload.js';
+import Papa from 'papaparse';
 import Variable from './Variable.js';
 import { makeRequest, makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
 
@@ -64,7 +65,13 @@ export default class Table {
 		return variables;
 	}
 
-	async listRows(maxResults) {
+	async listRows(argMaxResults, options = {}) {
+		if (typeof argMaxResults === 'object') {
+			options = argMaxResults;
+			argMaxResults = undefined;
+		}
+		let { maxResults = argMaxResults, variables } = options;
+
 		if (!this.variables) {
 			this.variables = await this.listVariables({ maxResults: 10000 });
 		}
@@ -72,32 +79,52 @@ export default class Table {
 			await this.get();
 		}
 		maxResults = maxResults === undefined ? this.properties.numRows : Math.min(maxResults, this.properties.numRows);
-		const rows = await makeRowsRequest({
+
+		let selectedVariables = this.variables;
+		if (variables?.length) {
+			selectedVariables = variables.map((name) => {
+				const variable = this.variables.find(
+					({ name: variableName }) => variableName.toLowerCase() === name.toLowerCase(),
+				);
+				if (!variable) {
+					throw new Error(`The variable ${name} was not found in this table`);
+				}
+				return { name, type: variable.type };
+			});
+		}
+
+		const res = await makeRowsRequest({
 			uri: this.uri,
 			maxResults,
-			query: { selectedVariables: this.variables.map((variable) => variable.properties.name).join(',') },
+			query: {
+				selectedVariables: selectedVariables.map((variable) => variable.name).join(','),
+				format: 'csv',
+			},
 		});
+
+		const { data: rows } = Papa.parse(res);
+
 		return rows.map((row) => {
 			const rowObject = {};
 			for (let i = 0; i < row.length; i++) {
 				if (row[i] === null) {
-					rowObject[this.variables[i].name] = row[i];
+					rowObject[selectedVariables[i].name] = row[i];
 				} else {
-					switch (this.variables[i].type) {
+					switch (selectedVariables[i].type) {
 						case 'integer':
-							rowObject[this.variables[i].name] = parseInt(row[i]);
+							rowObject[selectedVariables[i].name] = parseInt(row[i]);
 							break;
 						case 'float':
-							rowObject[this.variables[i].name] = parseFloat(row[i]);
+							rowObject[selectedVariables[i].name] = parseFloat(row[i]);
 							break;
 						case 'date':
-							rowObject[this.variables[i].name] = new Date(`${row[i]}T00:00:00Z`);
+							rowObject[selectedVariables[i].name] = new Date(`${row[i]}T00:00:00Z`);
 							break;
 						case 'dateTime':
-							rowObject[this.variables[i].name] = new Date(`${row[i]}Z`);
+							rowObject[selectedVariables[i].name] = new Date(`${row[i]}Z`);
 							break;
 						default:
-							rowObject[this.variables[i].name] = row[i];
+							rowObject[selectedVariables[i].name] = row[i];
 					}
 				}
 			}
