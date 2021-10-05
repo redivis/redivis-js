@@ -1,10 +1,10 @@
 {
 	"name": "redivis",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Redivis client library for javascript",
 	"scripts": {
 		"test": "node test/index.js",
-		"test-browser": "(sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000",
+		"test-browser": "npm run build && ((sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000) &",
 		"prepublishOnly": "npm run build && ./node_modules/.bin/bump --tag",
 		"build": "./node_modules/.bin/rollup index.js --format cjs --file ./dist/cjs/index.js && ./node_modules/.bin/rollup index.js --format umd --name \"redivis\" --file ./dist/umd/index.js && ./node_modules/.bin/rollup index.js --format esm --file ./dist/esm/index.js"
 	},
@@ -15,6 +15,12 @@
 		"import": "./dist/esm/index.js",
 		"require": "./dist/cjs/index.js",
 		"default": "./dist/umd/index.js"
+	},
+	"browser": {
+		"crypto": false,
+		"fs": false,
+		"node-fetch": false,
+		"keytar": false
 	},
 	"repository": {
 		"type": "git",
