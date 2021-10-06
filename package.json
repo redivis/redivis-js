@@ -1,6 +1,6 @@
 {
 	"name": "redivis",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"description": "Redivis client library for javascript",
 	"scripts": {
 		"test": "node test/index.js",
@@ -19,6 +19,7 @@
 	"browser": {
 		"crypto": false,
 		"fs": false,
+		"readline": false,
 		"node-fetch": false,
 		"keytar": false
 	},
