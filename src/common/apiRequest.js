@@ -93,7 +93,8 @@ export async function makePaginatedRequest({ path, pageSize = 100, query = {}, m
 }
 
 export async function makeRowsRequest({ uri, maxResults, query = {} }) {
-	return await makeRequest({
+	// TODO: we should leverage streams in nodejs environments
+	const res = await makeRequest({
 		method: 'GET',
 		path: `${uri}/rows`,
 		query: {
@@ -101,4 +102,5 @@ export async function makeRowsRequest({ uri, maxResults, query = {} }) {
 			maxResults,
 		},
 	});
+	return res;
 }
