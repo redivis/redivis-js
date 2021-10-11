@@ -193,7 +193,8 @@ async function oAuthBrowser() {
 				clearInterval(popupClosedInterval);
 
 				if (!url.startsWith(event.origin)) {
-					throw new Error(`Invalid origin`);
+					console.error(`Invalid origin`);
+					return;
 				}
 				const { code, state: finalState } = JSON.parse(event.data);
 				if (state !== finalState) {
