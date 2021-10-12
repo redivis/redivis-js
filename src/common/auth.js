@@ -4,11 +4,20 @@ let crypto;
 let popupWindowReference;
 let currentGetAuthTokenPromise;
 
-export async function authorize({ apiToken }) {
+export async function authorize({ apiToken } = {}) {
 	if (apiToken) {
 		return setCachedAuthToken({ access_token: apiToken, expires_at: Date.now() + 1e10 });
 	}
 	await getAuthToken({ apiToken, forceReauthorization: true });
+}
+
+export async function isAuthorized() {
+	const token = await getCachedAuthToken();
+	return !!token;
+}
+
+export async function deauthorize() {
+	await setCachedAuthToken('');
 }
 
 export async function getAuthToken({ forceReauthorization = false }) {
