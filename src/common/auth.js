@@ -197,14 +197,14 @@ async function oAuthBrowser() {
 		// add the listener for receiving a message from the popup
 		async function onMessageEventHandler(event) {
 			try {
-				window.removeEventListener('message', onMessageEventHandler);
-
-				clearInterval(popupClosedInterval);
-
 				if (!url.startsWith(event.origin)) {
 					console.error(`Invalid origin`);
 					return;
 				}
+				window.removeEventListener('message', onMessageEventHandler);
+
+				clearInterval(popupClosedInterval);
+
 				const { code, state: finalState } = JSON.parse(event.data);
 				if (state !== finalState) {
 					throw new Error(`An error occurred during login. Inconsistent state.`);

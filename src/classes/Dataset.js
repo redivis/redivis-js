@@ -1,5 +1,6 @@
 import Table from './Table.js';
 import Query from './Query.js';
+import Version from './Version.js';
 import { makeRequest, makePaginatedRequest } from '../common/apiRequest.js';
 
 // TODO: listAccess
@@ -123,6 +124,17 @@ export default class Dataset {
 			organization: this.organization,
 			version: 'current',
 		}).get();
+	}
+
+	async listVersions({ maxResults } = {}) {
+		let versions = await makePaginatedRequest({
+			path: `${this.uri}/versions`,
+			pageSize: 100,
+			maxResults,
+		});
+		versions = versions.map((version) => new Version({ ...version, dataset: this }));
+
+		return versions;
 	}
 
 	async listTables({ maxResults } = {}) {

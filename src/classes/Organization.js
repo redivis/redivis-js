@@ -1,6 +1,5 @@
 import Dataset from './Dataset.js';
 import { makePaginatedRequest } from '../common/apiRequest.js';
-// TODO: listDatasets
 // TODO: listMembers
 
 export default class Organization {
