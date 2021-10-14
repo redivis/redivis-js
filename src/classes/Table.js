@@ -19,7 +19,7 @@ export default class Table {
 		this.name = name;
 		this.dataset = dataset;
 		this.project = project;
-		this.identifier = `${owner.name}.${parent.name}:${versionString}.${this.name}${sampleString}`;
+		this.identifier = `${owner.name}.${parent.name}${versionString}.${this.name}${sampleString}`;
 		this.uri = `/tables/${encodeURIComponent(this.identifier)}`;
 		this.properties = { name, identifier: this.identifier, uri: this.uri, dataset, project, ...properties };
 	}
