@@ -136,7 +136,6 @@ export async function makeRowsRequest({ uri, maxResults, selectedVariables, form
 			format,
 		},
 	});
-	console.log(readSession);
 	const parsedStreamData = await pMap(
 		readSession.streams,
 		async ({ id, schemaIndex }) => {
