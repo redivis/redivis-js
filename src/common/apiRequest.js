@@ -147,11 +147,8 @@ export async function makeRowsRequest({ uri, maxResults, selectedVariables, form
 
 			const avroRes = await makeRequest({
 				method: 'GET',
-				path: `/readStreams/${encodeURIComponent(id)}`,
+				path: `/readStreams/${id}`,
 				parseResponse: false,
-				query: {
-					offset: 0,
-				},
 			});
 			const arrayBuffer = await avroRes.arrayBuffer();
 
