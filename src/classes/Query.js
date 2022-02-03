@@ -55,36 +55,9 @@ export default class Query {
 		maxResults =
 			maxResults === undefined
 				? this.properties.outputNumRows
-				: Math.max(maxResults, this.properties.outputNumRows);
+				: Math.min(maxResults, this.properties.outputNumRows);
 		const res = await makeRowsRequest({ uri: this.uri, maxResults, query: { format: 'csv' } });
-		const { data: rows } = Papa.parse(res);
-		const variables = await this.listVariables();
-		return rows.map((row) => {
-			const rowObject = {};
-			for (let i = 0; i < row.length; i++) {
-				if (row[i] === null) {
-					rowObject[variables[i].name] = row[i];
-				} else {
-					switch (variables[i].type) {
-						case 'integer':
-							rowObject[variables[i].name] = parseInt(row[i]);
-							break;
-						case 'float':
-							rowObject[variables[i].name] = parseFloat(row[i]);
-							break;
-						case 'date':
-							rowObject[variables[i].name] = new Date(`${row[i]}T00:00:00Z`);
-							break;
-						case 'dateTime':
-							rowObject[variables[i].name] = new Date(`${row[i]}Z`);
-							break;
-						default:
-							rowObject[variables[i].name] = row[i];
-					}
-				}
-			}
-			return rowObject;
-		});
+		return res;
 	}
 
 	async #waitForFinish() {

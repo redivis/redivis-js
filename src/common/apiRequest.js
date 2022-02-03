@@ -1,4 +1,6 @@
 import { getAuthToken } from './auth.js';
+import avro from 'avsc';
+import pMap from 'p-map';
 
 let fetch;
 if (typeof window !== 'undefined') {
@@ -19,7 +21,14 @@ function getApiEndpoint() {
 	}
 }
 
-export async function makeRequest({ method, path, query, payload, forceReauthorization = false }) {
+export async function makeRequest({
+	method,
+	path,
+	query,
+	payload,
+	parseResponse = true,
+	forceReauthorization = false,
+}) {
 	let url = `${getApiEndpoint()}${path}`;
 	const authToken = await getAuthToken({ forceReauthorization });
 	const headers = { Authorization: `Bearer ${authToken}` };
@@ -30,19 +39,25 @@ export async function makeRequest({ method, path, query, payload, forceReauthori
 			.join('&')}`;
 	}
 
-	payload = JSON.stringify(payload);
+	if (payload) {
+		payload = JSON.stringify(payload);
+		headers['Content-Type'] = 'application/json';
+	}
 	if (!fetch) {
 		const { default: nodeFetch } = await import('node-fetch');
 		fetch = nodeFetch;
 	}
 	const response = await fetch(url, { method, headers, body: payload });
-	let parsedResponse;
+	let parsedResponse = response;
 
-	if (response.headers.get('content-type')?.startsWith?.('application/json')) {
-		parsedResponse = await response.json();
-	} else {
-		parsedResponse = await response.text();
+	if (parseResponse) {
+		if (response.headers.get('content-type')?.startsWith?.('application/json')) {
+			parsedResponse = await response.json();
+		} else {
+			parsedResponse = await response.text();
+		}
 	}
+
 	if (response.status >= 400) {
 		if (response.status === 401) {
 			return makeRequest({ method, path, query, payload, forceReauthorization: true });
@@ -92,15 +107,78 @@ export async function makePaginatedRequest({ path, pageSize = 100, query = {}, m
 	return results;
 }
 
-export async function makeRowsRequest({ uri, maxResults, query = {} }) {
-	// TODO: we should leverage streams in nodejs environments
-	const res = await makeRequest({
-		method: 'GET',
-		path: `${uri}/rows`,
-		query: {
-			...query,
+class DateType extends avro.types.LogicalType {
+	_fromValue(val) {
+		// Date values are in days since epoch
+		return new Date(val * 1000 * 60 * 60 * 24);
+	}
+}
+
+class TimeType extends avro.types.LogicalType {
+	_fromValue(val) {
+		// Time values are stored in microseconds. Convert to milliseconds, Get the time portion, and remove the trailing 'Z'
+		return new Date(val / 1000).toISOString().split('T')[1].slice(0, -1);
+	}
+}
+class DateTimeType extends avro.types.LogicalType {
+	_fromValue(val) {
+		return new Date(val);
+	}
+}
+
+export async function makeRowsRequest({ uri, maxResults, selectedVariables, format }) {
+	const readSession = await makeRequest({
+		method: 'POST',
+		path: `${uri}/readSession`,
+		payload: {
 			maxResults,
+			selectedVariables,
+			format,
 		},
 	});
-	return res;
+	console.log(readSession);
+	const parsedStreamData = await pMap(
+		readSession.streams,
+		async ({ id, schemaIndex }) => {
+			const avroType = avro.Type.forSchema(readSession.avroSchemas[schemaIndex], {
+				logicalTypes: { 'time-micros': TimeType, datetime: DateTimeType, date: DateType },
+			});
+
+			// let a = Date.now();
+
+			const avroRes = await makeRequest({
+				method: 'GET',
+				path: `/readStreams/${encodeURIComponent(id)}`,
+				parseResponse: false,
+				query: {
+					offset: 0,
+				},
+			});
+			const arrayBuffer = await avroRes.arrayBuffer();
+
+			// console.log('got row data in ', Date.now() - a);
+			// a = Date.now();
+
+			const buff = Buffer.from(arrayBuffer);
+
+			const data = [];
+
+			let pos;
+			do {
+				const decodedData = avroType.decode(buff, pos);
+				pos = decodedData.offset; // pos is the byte position in the avro binary. Will be -1 once buffer is fully read
+
+				if (decodedData.value) {
+					data.push(decodedData.value);
+				}
+			} while (pos > 0);
+
+			// console.log('parsed data in ', Date.now() - a);
+
+			return data;
+		},
+		{ concurrency: 5 },
+	);
+
+	return [].concat(...parsedStreamData);
 }
