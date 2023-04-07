@@ -44,7 +44,7 @@
 	},
 	"devDependencies": {
 		"@skypack/package-check": "0.2.2",
-		"prettier": "2.3.2",
+		"prettier": "2.8.7",
 		"rollup": "2.54.0",
 		"@jsdevtools/version-bump-prompt": "6.1.0"
 	},
