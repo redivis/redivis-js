@@ -1,25 +1,7 @@
-import { getAuthToken } from './auth.js';
+import { getRequestConfig } from './auth.js';
 import avro from 'avsc';
 import pMap from 'p-map';
-
-let fetch;
-if (typeof window !== 'undefined') {
-	fetch = window.fetch;
-}
-
-if (typeof process !== 'undefined') {
-	if (process.env?.REDIVIS_API_ENDPOINT && process.env.REDIVIS_API_ENDPOINT.startsWith('https://localhost')) {
-		process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;
-	}
-}
-
-function getApiEndpoint() {
-	if (typeof process !== 'undefined') {
-		return process.env?.REDIVIS_API_ENDPOINT || 'https://redivis.com/api/v1';
-	} else {
-		return 'https://redivis.com/api/v1';
-	}
-}
+import { tableFromIPC } from 'apache-arrow';
 
 export async function makeRequest({
 	method,
@@ -29,9 +11,9 @@ export async function makeRequest({
 	parseResponse = true,
 	forceReauthorization = false,
 }) {
-	let url = `${getApiEndpoint()}${path}`;
-	const authToken = await getAuthToken({ forceReauthorization });
-	const headers = { Authorization: `Bearer ${authToken}` };
+	const { baseUrl, headers = {} } = await getRequestConfig({ forceReauthorization });
+
+	let url = `${baseUrl}${path}`;
 
 	if (query) {
 		url += `?${Object.entries(query)
@@ -43,10 +25,7 @@ export async function makeRequest({
 		payload = JSON.stringify(payload);
 		headers['Content-Type'] = 'application/json';
 	}
-	if (!fetch) {
-		const { default: nodeFetch } = await import('node-fetch');
-		fetch = nodeFetch;
-	}
+
 	const response = await fetch(url, { method, headers, body: payload });
 	let parsedResponse = response;
 
@@ -59,7 +38,7 @@ export async function makeRequest({
 	}
 
 	if (response.status >= 400) {
-		if (response.status === 401) {
+		if (response.status === 401 && !forceReauthorization) {
 			return makeRequest({ method, path, query, payload, forceReauthorization: true });
 		}
 		const err = new Error(parsedResponse.error?.message || parsedResponse);
@@ -126,55 +105,35 @@ class DateTimeType extends avro.types.LogicalType {
 	}
 }
 
-export async function makeRowsRequest({ uri, maxResults, selectedVariables, format }) {
+export async function makeRowsRequest({ uri, maxResults, selectedVariables }) {
 	const readSession = await makeRequest({
 		method: 'POST',
-		path: `${uri}/readSession`,
+		path: `${uri}/readSessions`,
 		payload: {
 			maxResults,
 			selectedVariables,
-			format,
+			format: 'arrow',
 		},
 	});
 	const parsedStreamData = await pMap(
 		readSession.streams,
-		async ({ id, schemaIndex }) => {
-			const avroType = avro.Type.forSchema(readSession.avroSchemas[schemaIndex], {
-				logicalTypes: { 'time-micros': TimeType, datetime: DateTimeType, date: DateType },
-			});
-
-			// let a = Date.now();
-
-			const avroRes = await makeRequest({
+		async ({ id }) => {
+			const rowsResponse = await makeRequest({
 				method: 'GET',
 				path: `/readStreams/${id}`,
 				parseResponse: false,
 			});
-			const arrayBuffer = await avroRes.arrayBuffer();
-
-			// console.log('got row data in ', Date.now() - a);
-			// a = Date.now();
-
-			const buff = Buffer.from(arrayBuffer);
-
-			const data = [];
-
-			let pos;
-			do {
-				const decodedData = avroType.decode(buff, pos);
-				pos = decodedData.offset; // pos is the byte position in the avro binary. Will be -1 once buffer is fully read
-
-				if (decodedData.value) {
-					data.push(decodedData.value);
-				}
-			} while (pos > 0);
-
-			// console.log('parsed data in ', Date.now() - a);
-
-			return data;
+			const table = await tableFromIPC(rowsResponse);
+			return table.toArray();
 		},
 		{ concurrency: 5 },
 	);
 
-	return [].concat(...parsedStreamData);
+	let finalResults = [].concat(...parsedStreamData);
+
+	// Handle situations where the backend sends a few too many records, due to a known bug (TODO: remove once fixed)
+	if (maxResults) {
+		finalResults = finalResults.slice(0, maxResults);
+	}
+	return finalResults;
 }

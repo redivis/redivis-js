@@ -3,7 +3,7 @@
 	"version": "0.2.10",
 	"description": "Redivis client library for javascript",
 	"scripts": {
-		"test": "node test/index.js",
+		"test": "NODE_TLS_REJECT_UNAUTHORIZED=0 node test/index.js",
 		"test-browser": "npm run build && ((sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000) &",
 		"prepublishOnly": "npm run build && ./node_modules/.bin/bump --tag",
 		"build": "./node_modules/.bin/rollup index.js --format cjs --file ./dist/cjs/index.js && ./node_modules/.bin/rollup index.js --format umd --name \"redivis\" --file ./dist/umd/index.js && ./node_modules/.bin/rollup index.js --format esm --file ./dist/esm/index.js"
@@ -37,10 +37,9 @@
 	},
 	"homepage": "https://github.com/redivis/redivis-js#readme",
 	"dependencies": {
+		"apache-arrow": "11.0.0",
 		"avsc": "^5.7.0",
 		"keytar": "^7.7.0",
-		"node-fetch": "^2.6.1",
-		"papaparse": "^5.3.1",
 		"p-map": "^5.3.0"
 	},
 	"devDependencies": {
