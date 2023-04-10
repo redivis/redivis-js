@@ -1,6 +1,4 @@
 import { getRequestConfig } from './auth.js';
-import avro from 'avsc';
-import pMap from 'p-map';
 import { tableFromIPC } from 'apache-arrow';
 
 export async function makeRequest({
@@ -86,47 +84,92 @@ export async function makePaginatedRequest({ path, pageSize = 100, query = {}, m
 	return results;
 }
 
-class DateType extends avro.types.LogicalType {
-	_fromValue(val) {
-		// Date values are in days since epoch
-		return new Date(val * 1000 * 60 * 60 * 24);
-	}
+function dateTransformer(val) {
+	return new Date(val);
 }
 
-class TimeType extends avro.types.LogicalType {
-	_fromValue(val) {
-		// Time values are stored in microseconds. Convert to milliseconds, Get the time portion, and remove the trailing 'Z'
-		return new Date(val / 1000).toISOString().split('T')[1].slice(0, -1);
-	}
-}
-class DateTimeType extends avro.types.LogicalType {
-	_fromValue(val) {
-		return new Date(val);
-	}
+function dateTimeTransformer(val) {
+	return new Date(val);
 }
 
-export async function makeRowsRequest({ uri, maxResults, selectedVariables }) {
+// Times are stored as a bigint representing microseconds. Convert to seconds as a standard Number (not bigint)
+function timeTransformer(val) {
+	return Number(val) / 1e6;
+}
+
+function floatTransformer(val) {
+	return Number(val);
+}
+
+// Map BigInts to javascript numbers
+// TODO: in the future, this should be configurable
+function integerTransformer(val) {
+	return Number(val);
+}
+
+function booleanTransformer(val) {
+	return val === 'true';
+}
+
+export async function makeRowsRequest({ uri, maxResults, mappedVariables, selectedVariables }) {
 	const readSession = await makeRequest({
 		method: 'POST',
 		path: `${uri}/readSessions`,
 		payload: {
 			maxResults,
-			selectedVariables,
+			selectedVariables: selectedVariables,
 			format: 'arrow',
 		},
 	});
-	const parsedStreamData = await pMap(
-		readSession.streams,
-		async ({ id }) => {
+	const variableTypeTransformerMap = new Map(
+		mappedVariables
+			.map((variable) => {
+				if (variable.type === 'float') {
+					return [variable.name.toLowerCase(), floatTransformer];
+				} else if (variable.type === 'integer') {
+					return [variable.name.toLowerCase(), integerTransformer];
+				} else if (variable.type === 'date') {
+					return [variable.name.toLowerCase(), dateTransformer];
+				} else if (variable.type === 'dateTime') {
+					return [variable.name.toLowerCase(), dateTimeTransformer];
+				} else if (variable.type === 'time') {
+					return [variable.name.toLowerCase(), timeTransformer];
+				} else if (variable.type === 'boolean') {
+					return [variable.name.toLowerCase(), booleanTransformer];
+				}
+			})
+			.filter((val) => val),
+	);
+	const parsedStreamData = await Promise.all(
+		readSession.streams.map(async ({ id }) => {
 			const rowsResponse = await makeRequest({
 				method: 'GET',
 				path: `/readStreams/${id}`,
 				parseResponse: false,
 			});
 			const table = await tableFromIPC(rowsResponse);
-			return table.toArray();
-		},
-		{ concurrency: 5 },
+			const casedVariableTypeTransformerMap = new Map(
+				table.schema.fields
+					.map(({ name }) => {
+						if (variableTypeTransformerMap.has(name.toLowerCase())) {
+							return [name, variableTypeTransformerMap.get(name.toLowerCase())];
+						}
+					})
+					.filter((val) => val),
+			);
+
+			const mappedArray = table.toArray().map((row) => row.toJSON()); // Converts the rows to JS arrays of values
+
+			for (const row of mappedArray) {
+				for (const [name, transformer] of casedVariableTypeTransformerMap.entries()) {
+					if (row[name] !== null) {
+						row[name] = transformer(row[name]);
+					}
+				}
+			}
+
+			return mappedArray;
+		}),
 	);
 
 	let finalResults = [].concat(...parsedStreamData);

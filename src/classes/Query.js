@@ -55,7 +55,8 @@ export default class Query {
 			maxResults === undefined
 				? this.properties.outputNumRows
 				: Math.min(maxResults, this.properties.outputNumRows);
-		const res = await makeRowsRequest({ uri: this.uri, maxResults });
+		const mappedVariables = await this.listVariables();
+		const res = await makeRowsRequest({ uri: this.uri, maxResults, mappedVariables });
 		return res;
 	}
 

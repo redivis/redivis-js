@@ -96,8 +96,8 @@ export default class Table {
 		const res = await makeRowsRequest({
 			uri: this.uri,
 			maxResults,
+			mappedVariables: this.variables,
 			selectedVariables: selectedVariables ? selectedVariables.map((variable) => variable.name) : undefined,
-			format: 'avro',
 		});
 
 		return res;

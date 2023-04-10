@@ -4,5 +4,6 @@ export default async function () {
 	const query = redivis.query(`
 		SELECT 1+1 AS two
 	`);
-	console.log((await query.listRows()).length);
+
+	console.log(await query.listRows());
 }
