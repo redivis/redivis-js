@@ -1,5 +1,6 @@
 import { getRequestConfig } from './auth.js';
 import { tableFromIPC } from 'apache-arrow';
+import packageJSON from '../../package.json' assert { type: 'json' };
 
 export async function makeRequest({
 	method,
@@ -10,6 +11,11 @@ export async function makeRequest({
 	forceReauthorization = false,
 }) {
 	const { baseUrl, headers = {} } = await getRequestConfig({ forceReauthorization });
+
+	const version = packageJSON.version;
+	headers['X-Redivis-Client'] = 'redivis-js';
+	headers['X-Redivis-Client-Version'] = version;
+	headers['User-Agent'] = typeof window === 'undefined' ? `redivis-js/${{ version }}` : window.navigator.userAgent;
 
 	let url = `${baseUrl}${path}`;
 
