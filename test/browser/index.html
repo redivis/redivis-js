@@ -3,14 +3,12 @@
 <script>
 	import('../../dist/esm/index.js')
 		.then(async (redivis) => {
-			console.log(redivis)
-			const rows = await redivis
-				.organization('demo')
-				.dataset('Novel Corona Virus 2019 Dataset')
-				.table('Covid 19 data')
-				.listRows(10);
-			console.log(rows);
-			document.body.innerHTML = JSON.stringify(rows)
+			document.body.innerHTML = 'Running query...'
+			window.redivis = redivis
+			const query = redivis.query(`SELECT * FROM demo.us_forest_service_fires:5k9t:v1_1.us_fire_perimeters:9r58 LIMIT 10`);
+			const results = await query.listRows();
+			console.log(results)
+			document.body.innerHTML = `<pre>${JSON.stringify(results, null, 2)}</pre>`
 		});
 </script>
 </html>

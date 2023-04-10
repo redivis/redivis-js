@@ -1,5 +1,4 @@
 import Upload from './Upload.js';
-import Papa from 'papaparse';
 import Variable from './Variable.js';
 import { makeRequest, makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
 
@@ -80,7 +79,8 @@ export default class Table {
 		}
 		maxResults = maxResults === undefined ? this.properties.numRows : Math.min(maxResults, this.properties.numRows);
 
-		let selectedVariables = this.variables;
+		let selectedVariables;
+
 		if (variables?.length) {
 			selectedVariables = variables.map((name) => {
 				const variable = this.variables.find(
@@ -96,8 +96,8 @@ export default class Table {
 		const res = await makeRowsRequest({
 			uri: this.uri,
 			maxResults,
-			selectedVariables: selectedVariables.map((variable) => variable.name),
-			format: 'avro',
+			mappedVariables: this.variables,
+			selectedVariables: selectedVariables ? selectedVariables.map((variable) => variable.name) : undefined,
 		});
 
 		return res;

@@ -1,6 +1,5 @@
 import { makeRequest, makeRowsRequest } from '../common/apiRequest.js';
 import Variable from './Variable.js';
-import Papa from 'papaparse';
 
 export default class Query {
 	constructor(argsQuery, options = {}) {
@@ -56,7 +55,8 @@ export default class Query {
 			maxResults === undefined
 				? this.properties.outputNumRows
 				: Math.min(maxResults, this.properties.outputNumRows);
-		const res = await makeRowsRequest({ uri: this.uri, maxResults, query: { format: 'csv' } });
+		const mappedVariables = await this.listVariables();
+		const res = await makeRowsRequest({ uri: this.uri, maxResults, mappedVariables });
 		return res;
 	}
 

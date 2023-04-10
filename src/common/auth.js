@@ -1,14 +1,33 @@
 let authToken;
-let fetch;
-let crypto;
 let popupWindowReference;
 let currentGetAuthTokenPromise;
+let apiProxy;
+
+function getApiEndpoint() {
+	if (typeof process !== 'undefined') {
+		return process.env?.REDIVIS_API_ENDPOINT || 'https://redivis.com/api/v1';
+	} else {
+		return 'https://redivis.com/api/v1';
+	}
+}
 
 export async function authorize({ apiToken } = {}) {
 	if (apiToken) {
 		return setCachedAuthToken({ access_token: apiToken, expires_at: Date.now() + 1e10 });
 	}
 	await getAuthToken({ apiToken, forceReauthorization: true });
+}
+
+export function setApiProxy(baseUrlArg, options = {}) {
+	if (baseUrlArg && typeof baseUrlArg !== 'object') {
+		options.baseUrl = baseUrlArg;
+	} else {
+		options = baseUrlArg;
+	}
+	if (!options.baseUrl) {
+		throw new Error(`A baseUrl must be provided for the API proxy`);
+	}
+	apiProxy = options;
 }
 
 export async function isAuthorized() {
@@ -18,6 +37,18 @@ export async function isAuthorized() {
 
 export async function deauthorize() {
 	await setCachedAuthToken('');
+}
+
+export async function getRequestConfig({ forceReauthorization }) {
+	if (apiProxy) {
+		return apiProxy;
+	} else {
+		const token = await getAuthToken({ forceReauthorization });
+		return {
+			baseUrl: getApiEndpoint(),
+			headers: { Authorization: `Bearer ${token}` },
+		};
+	}
 }
 
 export async function getAuthToken({ forceReauthorization = false }) {
@@ -34,12 +65,6 @@ export async function getAuthToken({ forceReauthorization = false }) {
 			authToken = null;
 		} else if (!authToken) {
 			authToken = await getCachedAuthToken();
-		}
-		if (!crypto) {
-			await importCrypto();
-		}
-		if (!fetch) {
-			await importFetch();
 		}
 
 		if (authToken && new Date(authToken.expires_at * 1000) > Date.now()) {
@@ -240,28 +265,6 @@ async function getPKCE() {
 	const verifier = generateRandomString();
 	const challenge = await pkceChallengeFromVerifier(verifier);
 	return { verifier, challenge };
-}
-
-async function importCrypto() {
-	if (!crypto) {
-		if (typeof window === 'undefined') {
-			const { webcrypto } = await import('crypto');
-			crypto = webcrypto;
-		} else {
-			crypto = window.crypto;
-		}
-	}
-}
-
-async function importFetch() {
-	if (!fetch) {
-		if (typeof window === 'undefined') {
-			const { default: nodeFetch } = await import('node-fetch');
-			fetch = nodeFetch;
-		} else {
-			fetch = window.fetch;
-		}
-	}
 }
 
 function generateRandomString() {
