@@ -1,10 +1,10 @@
 {
 	"name": "redivis",
-	"version": "0.3.1-beta.5",
+	"version": "0.3.1-beta.6",
 	"description": "Redivis client library for javascript",
 	"scripts": {
 		"test": "NODE_TLS_REJECT_UNAUTHORIZED=0 node test/index.js",
-		"test-browser": "npm run build && ((sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000) &",
+		"test-browser": "IS_LOCAL_TEST=TRUE npm run build && ((sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000) &",
 		"prepublishOnly": "npm run build && ./node_modules/.bin/bump --tag",
 		"build": "./node_modules/.bin/rollup index.js --config rollup.config.js --format cjs --file ./dist/cjs/index.js && ./node_modules/.bin/rollup index.js --config rollup.config.js --format umd --name \"redivis\" --file ./dist/umd/index.js && ./node_modules/.bin/rollup index.js --config rollup.config.js --format esm --file ./dist/esm/index.js"
 	},
@@ -38,6 +38,7 @@
 		"keytar": "^7.9.0"
 	},
 	"devDependencies": {
+		"@rollup/plugin-node-resolve": "15.0.2",
 		"@skypack/package-check": "0.2.2",
 		"prettier": "2.8.7",
 		"rollup": "3.20.2",
