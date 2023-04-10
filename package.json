@@ -1,6 +1,6 @@
 {
 	"name": "redivis",
-	"version": "0.3.1-beta.4",
+	"version": "0.3.1-beta.5",
 	"description": "Redivis client library for javascript",
 	"scripts": {
 		"test": "NODE_TLS_REJECT_UNAUTHORIZED=0 node test/index.js",
@@ -35,8 +35,7 @@
 	"homepage": "https://github.com/redivis/redivis-js#readme",
 	"dependencies": {
 		"apache-arrow": "^11.0.0",
-		"keytar": "^7.9.0",
-		"p-map": "^5.5.0"
+		"keytar": "^7.9.0"
 	},
 	"devDependencies": {
 		"@skypack/package-check": "0.2.2",
