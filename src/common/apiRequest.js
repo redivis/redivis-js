@@ -117,7 +117,13 @@ function booleanTransformer(val) {
 	return val === 'true';
 }
 
-export async function makeRowsRequest({ uri, maxResults, mappedVariables, selectedVariables }) {
+export async function makeRowsRequest({
+	uri,
+	maxResults,
+	mappedVariables,
+	selectedVariables,
+	requestedStreamCount = 1, // 1 seems to be the fastest
+}) {
 	const readSession = await makeRequest({
 		method: 'POST',
 		path: `${uri}/readSessions`,
@@ -125,6 +131,7 @@ export async function makeRowsRequest({ uri, maxResults, mappedVariables, select
 			maxResults,
 			selectedVariables: selectedVariables,
 			format: 'arrow',
+			requestedStreamCount,
 		},
 	});
 	const variableTypeTransformerMap = new Map(
@@ -181,7 +188,7 @@ export async function makeRowsRequest({ uri, maxResults, mappedVariables, select
 	let finalResults = [].concat(...parsedStreamData);
 
 	// Handle situations where the backend sends a few too many records, due to a known bug (TODO: remove once fixed)
-	if (maxResults) {
+	if (maxResults !== undefined) {
 		finalResults = finalResults.slice(0, maxResults);
 	}
 	return finalResults;

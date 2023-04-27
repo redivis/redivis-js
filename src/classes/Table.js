@@ -77,7 +77,9 @@ export default class Table {
 		if (!this.hasPopulatedProperties) {
 			await this.get();
 		}
-		maxResults = maxResults === undefined ? this.properties.numRows : Math.min(maxResults, this.properties.numRows);
+		if (maxResults) {
+			maxResults = Math.min(maxResults, this.properties.numRows);
+		}
 
 		let selectedVariables;
 
