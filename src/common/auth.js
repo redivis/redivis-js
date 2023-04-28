@@ -2,6 +2,7 @@ let authToken;
 let popupWindowReference;
 let currentGetAuthTokenPromise;
 let apiProxy;
+let memCachedAuthToken;
 
 function getApiEndpoint() {
 	if (typeof process !== 'undefined') {
@@ -101,7 +102,7 @@ async function getCachedAuthToken() {
 			return null;
 		}
 	} catch (e) {
-		// ignore
+		return memCachedAuthToken;
 	}
 }
 
@@ -114,6 +115,7 @@ async function setCachedAuthToken(token) {
 			sessionStorage.setItem('redivis_oauth_token', JSON.stringify(token));
 		}
 	} catch (e) {
+		memCachedAuthToken = token;
 		//ignore
 	}
 }
