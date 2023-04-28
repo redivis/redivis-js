@@ -12,6 +12,8 @@ function getApiEndpoint() {
 	}
 }
 
+// TODO: don't cache API token
+// TODO: setApiProxy could be replaced with options in authorize
 export async function authorize({ apiToken } = {}) {
 	if (apiToken) {
 		return setCachedAuthToken({ access_token: apiToken, expires_at: Date.now() + 1e10 });
