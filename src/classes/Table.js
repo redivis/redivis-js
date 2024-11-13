@@ -64,6 +64,11 @@ export default class Table {
 		return variables;
 	}
 
+	// TODO: toArrowRecordBatchStream
+	// TODO: toRowIterator: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols
+	// TODO: toArrowTable
+	// TODO: toArray ({ orientation: "columns" | "rows"})
+
 	async listRows(argMaxResults, options = {}) {
 		if (typeof argMaxResults === 'object') {
 			options = argMaxResults;

@@ -122,7 +122,7 @@ export async function makeRowsRequest({
 	maxResults,
 	mappedVariables,
 	selectedVariables,
-	requestedStreamCount = 1, // 1 seems to be the fastest
+	requestedStreamCount = Math.min(Math.ceil(maxResults / 1e6), 16), // TODO: should really be based off size... perhaps CPU count too
 }) {
 	const readSession = await makeRequest({
 		method: 'POST',
@@ -170,6 +170,10 @@ export async function makeRowsRequest({
 					})
 					.filter((val) => val),
 			);
+
+			console.log(table.toArray()[0]);
+			console.log(table);
+			console.log(typeof table.toArray()[0].annual_precip);
 
 			const mappedArray = table.toArray().map((row) => row.toJSON()); // Converts the rows to JS arrays of values
 

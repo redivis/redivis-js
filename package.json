@@ -6,15 +6,15 @@
 		"test": "NODE_TLS_REJECT_UNAUTHORIZED=0 node test/index.js",
 		"test-browser": "IS_LOCAL_TEST=TRUE npm run build && ((sleep 1 && open http://127.0.0.1:8000/test/browser) & python3 -m http.server 8000) &",
 		"prepublishOnly": "npm run build && ./node_modules/.bin/bump --tag",
-		"build": "./node_modules/.bin/rollup index.js --config rollup.config.js --format cjs --file ./dist/cjs/index.js && ./node_modules/.bin/rollup index.js --config rollup.config.js --format umd --name \"redivis\" --file ./dist/umd/index.js && ./node_modules/.bin/rollup index.js --config rollup.config.js --format esm --file ./dist/esm/index.js"
+		"build": "./node_modules/.bin/rollup index.js --config rollup.config.js --format cjs --file ./dist/cjs/index.cjs && ./node_modules/.bin/rollup index.js --config rollup.config.js --format umd --name \"redivis\" --file ./dist/umd/index.cjs && ./node_modules/.bin/rollup index.js --config rollup.config.js --format esm --file ./dist/esm/index.js"
 	},
 	"type": "module",
 	"main": "./dist/umd/index.js",
 	"module": "./dist/esm/index.js",
 	"exports": {
 		"import": "./dist/esm/index.js",
-		"require": "./dist/cjs/index.js",
-		"default": "./dist/umd/index.js"
+		"require": "./dist/cjs/index.cjs",
+		"default": "./dist/umd/index.cjs"
 	},
 	"browser": {
 		"readline": false,
@@ -34,7 +34,7 @@
 	},
 	"homepage": "https://github.com/redivis/redivis-js#readme",
 	"dependencies": {
-		"apache-arrow": "^11.0.0",
+		"apache-arrow": "^15.0.0",
 		"keytar": "^7.9.0"
 	},
 	"devDependencies": {

@@ -5,6 +5,8 @@
 		.then(async (redivis) => {
 			document.body.innerHTML = 'Running query...'
 			window.redivis = redivis
+			redivis.deauthorize()
+			redivis.setApiProxy('https://localhost:8443/api/v1')
 			const query = redivis.query(`SELECT * FROM demo.us_forest_service_fires:5k9t:v1_1.us_fire_perimeters:9r58 LIMIT 10`);
 			const results = await query.listRows();
 			console.log(results)
