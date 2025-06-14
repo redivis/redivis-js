@@ -1,6 +1,6 @@
 import { getRequestConfig } from './auth.js';
 import { tableFromIPC } from 'apache-arrow';
-import packageJSON from '../../package.json' assert { type: 'json' };
+import packageJSON from '../../package.json' with { type: 'json' };
 
 export async function makeRequest({
 	method,

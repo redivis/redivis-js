@@ -3,7 +3,8 @@ import Variable from './Variable.js';
 
 export default class Query {
 	constructor(argsQuery, options = {}) {
-		this.isFetching = true;
+		let onFetchCallback
+		this.fetchingPromise = new Promise((resolve) => onFetchCallback = resolve);
 		if (typeof argsQuery === 'object') {
 			options = argsQuery;
 			argsQuery = undefined;
@@ -21,13 +22,13 @@ export default class Query {
 		// TODO: only make the request when this.get is called
 		makeRequest({ method: 'POST', path: '/queries', payload })
 			.then((res) => {
-				this.isFetching = false;
+				onFetchCallback()
 				this.properties = res;
 				this.uri = `/queries/${this.properties.id}`;
 			})
 			.catch((e) => {
 				this.error = e;
-				this.isFetching = false;
+				onFetchCallback()
 			});
 	}
 
@@ -62,10 +63,8 @@ export default class Query {
 
 	async #waitForFinish() {
 		while (true) {
-			if (this.isFetching) {
-				await new Promise((resolve) => setTimeout(resolve, 2000));
-				continue;
-			} else if (this.error) {
+			await this.fetchingPromise
+			if (this.error) {
 				throw new Error(this.error);
 			} else if (this.properties.status === 'completed') {
 				break;
