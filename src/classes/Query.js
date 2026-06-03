@@ -57,7 +57,12 @@ export default class Query {
 				? this.properties.outputNumRows
 				: Math.min(maxResults, this.properties.outputNumRows);
 		const mappedVariables = await this.listVariables();
-		const res = await makeRowsRequest({ uri: this.uri, maxResults, mappedVariables });
+		const res = await makeRowsRequest({
+			uri: this.uri,
+			maxResults,
+			createReadSession: this.properties.outputNumBytes > 1e8, // 100MB
+			mappedVariables
+		});
 		return res;
 	}
 
