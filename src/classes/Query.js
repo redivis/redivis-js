@@ -2,9 +2,10 @@ import { makeRequest, makeRowsRequest } from '../common/apiRequest.js';
 import Variable from './Variable.js';
 
 export default class Query {
+	#didInitiate = false;
+	#payload = null
+
 	constructor(argsQuery, options = {}) {
-		let onFetchCallback
-		this.fetchingPromise = new Promise((resolve) => onFetchCallback = resolve);
 		if (typeof argsQuery === 'object') {
 			options = argsQuery;
 			argsQuery = undefined;
@@ -18,18 +19,7 @@ export default class Query {
 		} else if (defaultDataset) {
 			payload.defaultDataset = defaultDataset.identifier;
 		}
-
-		// TODO: only make the request when this.get is called
-		makeRequest({ method: 'POST', path: '/queries', payload })
-			.then((res) => {
-				onFetchCallback()
-				this.properties = res;
-				this.uri = `/queries/${this.properties.id}`;
-			})
-			.catch((e) => {
-				this.error = e;
-				onFetchCallback()
-			});
+		this.#payload = payload;
 	}
 
 	getProperty(prop) {
@@ -40,7 +30,23 @@ export default class Query {
 		return JSON.stringify(this.properties, null, 2);
 	}
 
+	async #initiate(){
+		if (!this.#didInitiate){
+			this.#didInitiate = true;
+			await makeRequest({ method: 'POST', path: '/queries', payload: this.#payload })
+				.then((res) => {
+					this.properties = res;
+					this.uri = `/queries/${this.properties.id}`;
+				})
+				.catch((e) => {
+					this.error = e;
+				});
+		}
+
+	}
+
 	async get() {
+		await this.#initiate()
 		this.properties = await makeRequest({ method: 'GET', path: this.uri });
 		return this;
 	}
@@ -67,8 +73,8 @@ export default class Query {
 	}
 
 	async #waitForFinish() {
+		await this.#initiate()
 		while (true) {
-			await this.fetchingPromise
 			if (this.error) {
 				throw new Error(this.error);
 			} else if (this.properties.status === 'completed') {

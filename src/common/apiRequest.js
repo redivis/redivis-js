@@ -20,9 +20,26 @@ export async function makeRequest({
 	let url = `${baseUrl}${path}`;
 
 	if (query) {
-		url += `?${Object.entries(query)
-			.map(([key, value]) => `${key}=${value}`)
-			.join('&')}`;
+		const params = new URLSearchParams();
+
+		for (const [key, value] of Object.entries(query)) {
+			if (value === undefined || value === null) continue;
+
+			if (Array.isArray(value)) {
+				for (const item of value) {
+					if (item !== undefined && item !== null) {
+						params.append(key, String(item));
+					}
+				}
+			} else {
+				params.append(key, String(value));
+			}
+		}
+
+		const queryString = params.toString();
+		if (queryString) {
+			url += `?${queryString}`;
+		}
 	}
 
 	if (payload) {
@@ -31,7 +48,23 @@ export async function makeRequest({
 	}
 
 	const response = await fetch(url, { method, headers, body: payload });
+
 	let parsedResponse = response;
+
+	if (response.status >= 400) {
+		if (response.status === 401 && !forceReauthorization) {
+			return makeRequest({ method, path, query, payload, forceReauthorization: true });
+		}
+		if (response.headers.get('content-type')?.startsWith?.('application/json')) {
+			parsedResponse = await response.json();
+		} else {
+			parsedResponse = await response.text();
+		}
+
+		const err = new Error(parsedResponse.error_description || parsedResponse.error || parsedResponse);
+		err.status = response.status;
+		throw err;
+	}
 
 	if (parseResponse) {
 		if (response.headers.get('content-type')?.startsWith?.('application/json')) {
@@ -39,15 +72,6 @@ export async function makeRequest({
 		} else {
 			parsedResponse = await response.text();
 		}
-	}
-
-	if (response.status >= 400) {
-		if (response.status === 401 && !forceReauthorization) {
-			return makeRequest({ method, path, query, payload, forceReauthorization: true });
-		}
-		const err = new Error(parsedResponse.error_description || parsedResponse.error || parsedResponse);
-		err.status = response.status;
-		throw err;
 	}
 	return parsedResponse;
 }

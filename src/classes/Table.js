@@ -99,6 +99,7 @@ export default class Table {
 			uri: this.uri,
 			maxResults,
 			mappedVariables: this.variables,
+			createReadSession: this.properties.numBytes > 1e8, // 100MB
 			selectedVariables: selectedVariables ? selectedVariables.map((variable) => variable.name) : undefined,
 		});
 
