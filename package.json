@@ -1,6 +1,6 @@
 {
 	"name": "redivis",
-	"version": "0.3.9",
+	"version": "0.3.10",
 	"description": "Redivis client library for javascript",
 	"scripts": {
 		"test": "NODE_TLS_REJECT_UNAUTHORIZED=0 node test/index.js",
