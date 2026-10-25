@@ -1,21 +1,18 @@
-import { getRequestConfig } from './auth.js';
+import { canReauthorize, getRequestConfig, refreshCredentials } from './auth.js';
 import { tableFromIPC } from 'apache-arrow';
-import packageJSON from '../../package.json' with { type: 'json' };
+import packageJson from '../../package.json' with { type: "json" };
 
-export async function makeRequest({
-	method,
-	path,
-	query,
-	payload,
-	parseResponse = true,
-	forceReauthorization = false,
-}) {
-	const { baseUrl, headers = {} } = await getRequestConfig({ forceReauthorization });
+const { version } = packageJson;
 
-	const version = packageJSON.version;
+// A backstop on authentication retries, in case the server's failures keep changing without ever succeeding
+const MAX_AUTH_ATTEMPTS = 5;
+
+export async function makeRequest({ method, path, query, payload, parseResponse = true, authFailures = [] }) {
+	const { baseUrl, headers = {} } = await getRequestConfig();
+
 	headers['X-Redivis-Client'] = 'redivis-js';
 	headers['X-Redivis-Client-Version'] = version;
-	headers['User-Agent'] = typeof window === 'undefined' ? `redivis-js/${{ version }}` : window.navigator.userAgent;
+	headers['User-Agent'] = typeof window === 'undefined' ? `redivis-js/${version}` : window.navigator.userAgent;
 
 	let url = `${baseUrl}${path}`;
 
@@ -42,26 +39,63 @@ export async function makeRequest({
 		}
 	}
 
+	let body;
 	if (payload) {
-		payload = JSON.stringify(payload);
+		body = JSON.stringify(payload);
 		headers['Content-Type'] = 'application/json';
 	}
 
-	const response = await fetch(url, { method, headers, body: payload });
+	const response = await fetch(url, { method, headers, body });
 
 	let parsedResponse = response;
 
 	if (response.status >= 400) {
-		if (response.status === 401 && !forceReauthorization) {
-			return makeRequest({ method, path, query, payload, forceReauthorization: true });
-		}
 		if (response.headers.get('content-type')?.startsWith?.('application/json')) {
 			parsedResponse = await response.json();
 		} else {
 			parsedResponse = await response.text();
 		}
+		const { error, error_description, scope, amr_values } = typeof parsedResponse === 'object' ? parsedResponse : {};
 
-		const err = new Error(parsedResponse.error_description || parsedResponse.error || parsedResponse);
+		const isAuthFailure = response.status === 401 || (response.status === 403 && error === 'insufficient_scope');
+		// Authenticating is only worth retrying while it makes progress, i.e. each attempt fails differently than the
+		//   ones before it: an anonymous request that's rejected, then a scope upgrade after logging in, and so on. Once
+		//   a failure repeats, re-authenticating can't help, and retrying anyway would loop forever.
+		const authFailure =
+			isAuthFailure &&
+			JSON.stringify({
+				status: response.status,
+				authenticated: !!headers.Authorization,
+				error,
+				error_description,
+				scope,
+				amr_values,
+			});
+
+		if (
+			isAuthFailure &&
+			canReauthorize() &&
+			!authFailures.includes(authFailure) &&
+			authFailures.length < MAX_AUTH_ATTEMPTS
+		) {
+			console.warn(`${error}: ${error_description || 'Authentication is required to access this resource.'}`);
+			await refreshCredentials({
+				scope: scope?.split(' '),
+				amrValues: amr_values,
+				rejectedToken: headers.Authorization?.replace(/^Bearer /, ''),
+			});
+			return makeRequest({
+				method,
+				path,
+				query,
+				payload,
+				parseResponse,
+				authFailures: [...authFailures, authFailure],
+			});
+		}
+
+		// Auth errors are flat ({ error, error_description }), while other API errors nest them ({ error: { message } })
+		const err = new Error(error_description || error?.message || error || parsedResponse);
 		err.status = response.status;
 		throw err;
 	}

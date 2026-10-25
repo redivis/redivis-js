@@ -1,7 +1,10 @@
 <html>
 
+<script type="importmap">
+	{ "imports": { "apache-arrow": "https://esm.sh/apache-arrow@21.2.0" } }
+</script>
 <script>
-	import('../../dist/esm/index.js')
+	import('../../index.js')
 		.then(async (redivis) => {
 			document.body.innerHTML = 'Running query...'
 			window.redivis = redivis
