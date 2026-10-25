@@ -1,61 +1,109 @@
 import { canReauthorize, getRequestConfig, refreshCredentials } from './auth.js';
+import { createApiError, NetworkError } from './errors.js';
+import { isNode } from './node.js';
 import { tableFromIPC } from 'apache-arrow';
-import packageJson from '../../package.json' with { type: "json" };
+import packageJson from '../../package.json' with { type: 'json' };
 
 const { version } = packageJson;
 
 // A backstop on authentication retries, in case the server's failures keep changing without ever succeeding
 const MAX_AUTH_ATTEMPTS = 5;
+// Retries for a 503 (and, for idempotent requests, network failures), with linear backoff
+const MAX_RETRIES = 10;
 
-export async function makeRequest({ method, path, query, payload, parseResponse = true, authFailures = [] }) {
+const printedWarnings = new Set();
+
+/**
+ * Makes a request to the Redivis API, authenticating as needed.
+ *
+ * @param {object} options
+ * @param {string} [options.method='GET']
+ * @param {string} options.path Path relative to the API root, e.g. `/users/me`
+ * @param {object} [options.query] Query parameters; array values are sent as repeated parameters
+ * @param {object} [options.payload] Request body, sent as JSON
+ * @param {object} [options.headers] Additional request headers
+ * @param {boolean} [options.parseResponse=true] Whether to parse the response body (as JSON when it's JSON, text
+ *   otherwise). If false, the raw `Response` is returned.
+ * @param {RequestCache} [options.cache] The fetch cache mode
+ * @param {AbortSignal} [options.signal]
+ * @returns {Promise<any>}
+ */
+export async function makeRequest({
+	method = 'GET',
+	path,
+	query,
+	payload,
+	headers: extraHeaders,
+	parseResponse = true,
+	cache,
+	signal,
+	authFailures = [],
+	retryCount = 0,
+}) {
 	const { baseUrl, headers = {} } = await getRequestConfig();
 
 	headers['X-Redivis-Client'] = 'redivis-js';
 	headers['X-Redivis-Client-Version'] = version;
-	headers['User-Agent'] = typeof window === 'undefined' ? `redivis-js/${version}` : window.navigator.userAgent;
-
-	let url = `${baseUrl}${path}`;
-
-	if (query) {
-		const params = new URLSearchParams();
-
-		for (const [key, value] of Object.entries(query)) {
-			if (value === undefined || value === null) continue;
-
-			if (Array.isArray(value)) {
-				for (const item of value) {
-					if (item !== undefined && item !== null) {
-						params.append(key, String(item));
-					}
-				}
-			} else {
-				params.append(key, String(value));
-			}
-		}
-
-		const queryString = params.toString();
-		if (queryString) {
-			url += `?${queryString}`;
-		}
+	if (isNode) {
+		// Browsers don't allow setting the User-Agent
+		headers['User-Agent'] = `redivis-js/${version}`;
 	}
+	Object.assign(headers, extraHeaders);
+
+	const url = `${baseUrl}${path}${toQueryString(query)}`;
 
 	let body;
-	if (payload) {
+	if (payload !== undefined) {
 		body = JSON.stringify(payload);
 		headers['Content-Type'] = 'application/json';
 	}
 
-	const response = await fetch(url, { method, headers, body });
+	const retry = (overrides) =>
+		makeRequest({
+			method,
+			path,
+			query,
+			payload,
+			headers: extraHeaders,
+			parseResponse,
+			cache,
+			signal,
+			authFailures,
+			retryCount,
+			...overrides,
+		});
 
-	let parsedResponse = response;
+	let response;
+	try {
+		response = await fetch(url, { method, headers, body, cache, signal });
+	} catch (e) {
+		if (signal?.aborted) {
+			throw e;
+		}
+		// Only idempotent requests are safe to repeat, since we can't know whether the server received the original
+		if ((method === 'GET' || method === 'HEAD') && retryCount < MAX_RETRIES) {
+			await sleep(retryCount * 1000, signal);
+			return retry({ retryCount: retryCount + 1 });
+		}
+		throw new NetworkError(`${method} ${path} failed`, { cause: e });
+	}
+
+	if (response.status === 503 && retryCount < MAX_RETRIES) {
+		await response.body?.cancel();
+		await sleep(retryCount * 1000, signal);
+		return retry({ retryCount: retryCount + 1 });
+	}
+
+	const warning = response.headers.get('x-redivis-warning');
+	if (warning && !printedWarnings.has(warning)) {
+		printedWarnings.add(warning);
+		console.warn(warning);
+	}
 
 	if (response.status >= 400) {
-		if (response.headers.get('content-type')?.startsWith?.('application/json')) {
-			parsedResponse = await response.json();
-		} else {
-			parsedResponse = await response.text();
-		}
-		const { error, error_description, scope, amr_values } = typeof parsedResponse === 'object' ? parsedResponse : {};
+		const parsedResponse = await parseErrorResponse(response, method);
+		const { error, error_description, scope, amr_values } =
+			parsedResponse && typeof parsedResponse === 'object' ? parsedResponse : {};
 
 		const isAuthFailure = response.status === 401 || (response.status === 403 && error === 'insufficient_scope');
 		// Authenticating is only worth retrying while it makes progress, i.e. each attempt fails differently than the
@@ -84,63 +132,112 @@ export async function makeRequest({ method, path, query, payload, parseResponse 
 				amrValues: amr_values,
 				rejectedToken: headers.Authorization?.replace(/^Bearer /, ''),
 			});
-			return makeRequest({
-				method,
-				path,
-				query,
-				payload,
-				parseResponse,
-				authFailures: [...authFailures, authFailure],
-			});
+			return retry({ authFailures: [...authFailures, authFailure] });
 		}
 
-		// Auth errors are flat ({ error, error_description }), while other API errors nest them ({ error: { message } })
-		const err = new Error(error_description || error?.message || error || parsedResponse);
-		err.status = response.status;
-		throw err;
+		throw createApiError(response.status, parsedResponse);
 	}
 
-	if (parseResponse) {
-		if (response.headers.get('content-type')?.startsWith?.('application/json')) {
-			parsedResponse = await response.json();
-		} else {
-			parsedResponse = await response.text();
-		}
+	if (!parseResponse) {
+		return response;
 	}
-	return parsedResponse;
+	if (method === 'HEAD' || response.status === 204) {
+		return null;
+	}
+	if (response.headers.get('content-type')?.startsWith('application/json')) {
+		return response.json();
+	}
+	return response.text();
 }
 
-export async function makePaginatedRequest({ path, pageSize = 100, query = {}, maxResults }) {
+/**
+ * Fetches every page of a paginated API listing, up to `maxResults` results.
+ * @returns {Promise<object[]>}
+ */
+export async function makePaginatedRequest({ path, pageSize = 100, query = {}, maxResults, signal }) {
 	const results = [];
-	let page = 0;
 	let nextPageToken;
 
-	while (true) {
-		if (maxResults && results.length >= maxResults) break;
-
-		if (nextPageToken) {
-			query.pageToken = nextPageToken;
-		}
-
+	while (maxResults === undefined || maxResults === null || results.length < maxResults) {
 		const response = await makeRequest({
 			method: 'GET',
 			path,
+			signal,
 			query: {
 				...query,
+				pageToken: nextPageToken,
 				maxResults:
-					maxResults === undefined || (page + 1) * pageSize < maxResults
+					maxResults === undefined || maxResults === null
 						? pageSize
-						: maxResults - page * pageSize,
+						: Math.min(pageSize, maxResults - results.length),
 			},
 		});
-		page++;
 		results.push(...response.results);
 		nextPageToken = response.nextPageToken;
 		if (!nextPageToken) {
 			break;
 		}
 	}
-	return results;
+	return maxResults === undefined || maxResults === null ? results : results.slice(0, maxResults);
+}
+
+function toQueryString(query) {
+	if (!query) return '';
+
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(query)) {
+		if (value === undefined || value === null) continue;
+
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (item !== undefined && item !== null) {
+					params.append(key, String(item));
+				}
+			}
+		} else {
+			params.append(key, String(value));
+		}
+	}
+	const queryString = params.toString();
+	return queryString ? `?${queryString}` : '';
+}
+
+async function parseErrorResponse(response, method) {
+	// A HEAD response has no body, so the API sends the error in a header instead
+	if (method === 'HEAD') {
+		const errorPayload = response.headers.get('x-redivis-error-payload');
+		if (!errorPayload) {
+			return { error: response.status === 404 ? 'not_found' : 'unknown_error' };
+		}
+		try {
+			return JSON.parse(decodeURIComponent(errorPayload));
+		} catch (e) {
+			return decodeURIComponent(errorPayload);
+		}
+	}
+	const text = await response.text();
+	try {
+		return JSON.parse(text);
+	} catch (e) {
+		return text;
+	}
+}
+
+function sleep(ms, signal) {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			return reject(signal.reason);
+		}
+		const timeout = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			'abort',
+			() => {
+				clearTimeout(timeout);
+				reject(signal.reason);
+			},
+			{ once: true },
+		);
+	});
 }
 
 // TODO: use temporal for dates + times
@@ -175,7 +272,7 @@ export async function makeRowsRequest({
 	const variableTypeTransformerMap = new Map(
 		mappedVariables
 			.map((variable) => {
-				 if (variable.type === 'integer') {
+				if (variable.type === 'integer') {
 					return [variable.name.toLowerCase(), integerTransformer];
 				} else if (variable.type === 'date') {
 					return [variable.name.toLowerCase(), dateTransformer];
@@ -188,8 +285,8 @@ export async function makeRowsRequest({
 			.filter((val) => val),
 	);
 
-	let finalResults
-	if (createReadSession){
+	let finalResults;
+	if (createReadSession) {
 		const readSession = await makeRequest({
 			method: 'POST',
 			path: `${uri}/readSessions`,
@@ -212,7 +309,7 @@ export async function makeRowsRequest({
 			}),
 		);
 
-		 finalResults = [].concat(...parsedStreamData);
+		finalResults = [].concat(...parsedStreamData);
 	} else {
 		const arrowResponse = await makeRequest({
 			method: 'GET',
@@ -223,12 +320,10 @@ export async function makeRowsRequest({
 				selectedVariables,
 				format: 'arrow',
 			},
-		})
+		});
 
 		finalResults = await parseArrowStream(arrowResponse, variableTypeTransformerMap);
 	}
-
-
 
 	return finalResults;
 }

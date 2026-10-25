@@ -1,6 +1,5 @@
 import { showSignInPrompt } from './signInPrompt.js';
-
-const isNode = typeof window === 'undefined';
+import { isNode, getEnv, importNodeModule } from './node.js';
 
 // Node mirrors the Python client: an offline (refresh token) login via the device flow, cached on disk. In the
 //   browser the library can run on any site, so it only ever holds a short-lived, read-only token for the tab.
@@ -15,10 +14,6 @@ let apiToken;
 let apiProxy;
 let authLock = Promise.resolve();
 let popupWindowReference;
-
-function getEnv(name) {
-	return typeof process !== 'undefined' ? process.env?.[name] : undefined;
-}
 
 function getApiEndpoint() {
 	return getEnv('REDIVIS_API_ENDPOINT') || 'https://redivis.com/api/v1';
@@ -308,7 +303,7 @@ async function openBrowser(url) {
 		return false;
 	}
 
-	const { spawn } = await import('node:child_process');
+	const { spawn } = await importNodeModule('child_process');
 	return new Promise((resolve) => {
 		const child = spawn(command, args, { stdio: 'ignore', detached: true });
 		child.on('error', () => resolve(false));
@@ -457,8 +452,8 @@ async function parseOAuthResponse(res) {
 }
 
 async function getCredentialsPaths() {
-	const os = await import('node:os');
-	const path = await import('node:path');
+	const os = await importNodeModule('os');
+	const path = await importNodeModule('path');
 	// Overridable for environments where the home directory isn't writable, or is shared between users
 	const configDir = getEnv('REDIVIS_CONFIG_DIR')?.replace(/^~(?=$|[\\/])/, os.homedir());
 	const redivisDir = path.resolve(configDir || path.join(os.homedir(), '.redivis'));
@@ -472,7 +467,7 @@ async function loadCachedCredentials() {
 	}
 	try {
 		if (isNode) {
-			const { readFile } = await import('node:fs/promises');
+			const { readFile } = await importNodeModule('fs/promises');
 			const { credentialsFile } = await getCredentialsPaths();
 			cachedCredentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
 		} else {
@@ -495,8 +490,8 @@ async function writeCachedCredentials(credentials) {
 		return;
 	}
 
-	const { mkdir, open, rename, rm } = await import('node:fs/promises');
-	const path = await import('node:path');
+	const { mkdir, open, rename, rm } = await importNodeModule('fs/promises');
+	const path = await importNodeModule('path');
 	const { redivisDir, credentialsFile } = await getCredentialsPaths();
 	// The file holds a refresh token, so keep it private to this user
 	await mkdir(redivisDir, { recursive: true, mode: 0o700 });
@@ -518,7 +513,7 @@ async function writeCachedCredentials(credentials) {
 async function clearCachedCredentials() {
 	cachedCredentials = null;
 	if (isNode) {
-		const { rm } = await import('node:fs/promises');
+		const { rm } = await importNodeModule('fs/promises');
 		const { credentialsFile } = await getCredentialsPaths();
 		await rm(credentialsFile, { force: true });
 	} else {

@@ -13,10 +13,11 @@
 		"url": "git+https://github.com/redivis/redivis-js.git"
 	},
 	"scripts": {
-		"test": "node test/index.js",
+		"test": "node --test test/offline/*.test.js",
 		"test-browser": "(sleep 1 && open http://127.0.0.1:9000/test/browser) & python3 -m http.server 9000",
 		"release": "npm version",
-		"postversion": "git push --follow-tags && npm publish"
+		"postversion": "git push --follow-tags && npm publish",
+		"test:live": "node --test test/live/*.test.js"
 	},
 	"type": "module",
 	"exports": "./index.js",

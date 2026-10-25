@@ -1,88 +1,105 @@
-import { makeRequest, makeRowsRequest } from '../common/apiRequest.js';
+import Base from './Base.js';
 import Variable from './Variable.js';
+import { makeRequest, makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
+import { parseArgs } from '../common/args.js';
+import { getConfigValue } from '../common/config.js';
+import { JobError } from '../common/errors.js';
 
-export default class Query {
-	#didInitiate = false;
-	#payload = null
+export default class Query extends Base {
+	#initiation = null;
+	#payload = null;
 
-	constructor(argsQuery, options = {}) {
-		if (typeof argsQuery === 'object') {
-			options = argsQuery;
-			argsQuery = undefined;
+	/**
+	 * Queries are lazy: the query isn't started until it's first used.
+	 *
+	 * @param {string} query The SQL query
+	 * @param {object} [options]
+	 * @param {string|object} [options.defaultWorkflow] Workflow (or its qualified reference) that unqualified table
+	 *   references resolve within. Defaults to the configured defaultWorkflow.
+	 * @param {string|object} [options.defaultDataset] Dataset (or its qualified reference) that unqualified table
+	 *   references resolve within. Defaults to the configured defaultDataset.
+	 */
+	constructor(...args) {
+		super();
+		let { query, defaultWorkflow, defaultDataset } = parseArgs(args, ['query'], {
+			allowed: ['defaultWorkflow', 'defaultDataset'],
+		});
+		if (!defaultWorkflow && !defaultDataset) {
+			defaultWorkflow = getConfigValue('defaultWorkflow');
+			defaultDataset = getConfigValue('defaultDataset');
 		}
-		const { query = argsQuery, defaultWorkflow, defaultDataset } = options;
-		const payload = {
-			query,
-		};
+		const payload = { query };
 		if (defaultWorkflow) {
-			payload.defaultWorkflow = defaultWorkflow.identifier;
+			payload.defaultWorkflow = defaultWorkflow.qualifiedReference ?? defaultWorkflow;
 		} else if (defaultDataset) {
-			payload.defaultDataset = defaultDataset.identifier;
+			payload.defaultDataset = defaultDataset.qualifiedReference ?? defaultDataset;
 		}
 		this.#payload = payload;
-	}
-
-	getProperty(prop) {
-		return this.properties?.[prop];
+		this.properties = {};
 	}
 
 	toString() {
-		return JSON.stringify(this.properties, null, 2);
-	}
-
-	async #initiate(){
-		if (!this.#didInitiate){
-			this.#didInitiate = true;
-			await makeRequest({ method: 'POST', path: '/queries', payload: this.#payload })
-				.then((res) => {
-					this.properties = res;
-					this.uri = `/queries/${this.properties.id}`;
-				})
-				.catch((e) => {
-					this.error = e;
-				});
-		}
-
+		return `<Query ${this.properties.id || '[uninitiated]'}>`;
 	}
 
 	async get() {
-		await this.#initiate()
-		this.properties = await makeRequest({ method: 'GET', path: this.uri });
+		await this.#initiate();
+		this._updateProperties(await makeRequest({ method: 'GET', path: this.uri }));
 		return this;
 	}
 
-	async listVariables() {
-		await this.#waitForFinish();
-		return this.properties.outputSchema.map((variable) => new Variable({ ...variable, query: this }));
+	async variable(...args) {
+		const { name } = parseArgs(args, ['name']);
+		await this._waitForFinish();
+		return new Variable(name, { query: this });
 	}
 
-	async listRows(maxResults) {
-		await this.#waitForFinish();
+	async listVariables(...args) {
+		const { maxResults } = parseArgs(args, ['maxResults']);
+		await this._waitForFinish();
+		const variables = await makePaginatedRequest({ path: `${this.uri}/variables`, pageSize: 1000, maxResults });
+		return variables.map((variable) => new Variable(variable.name, { query: this, properties: variable }));
+	}
+
+	async listRows(...args) {
+		let { maxResults } = parseArgs(args, ['maxResults']);
+		await this._waitForFinish();
 		maxResults =
 			maxResults === undefined
 				? this.properties.outputNumRows
 				: Math.min(maxResults, this.properties.outputNumRows);
-		const mappedVariables = await this.listVariables();
-		const res = await makeRowsRequest({
+		return makeRowsRequest({
 			uri: this.uri,
 			maxResults,
 			createReadSession: this.properties.outputNumBytes > 1e8, // 100MB
-			mappedVariables
+			mappedVariables: await this.listVariables(),
 		});
-		return res;
 	}
 
-	async #waitForFinish() {
-		await this.#initiate()
+	// The query is only created once, however many callers are waiting on it
+	#initiate() {
+		if (!this.#initiation) {
+			this.#initiation = makeRequest({ method: 'POST', path: '/queries', payload: this.#payload }).then(
+				(properties) => this._updateProperties(properties),
+			);
+		}
+		return this.#initiation;
+	}
+
+	_updateProperties(properties) {
+		this.properties = properties;
+		this.uri = properties.uri ?? `/queries/${properties.id}`;
+	}
+
+	async _waitForFinish() {
+		await this.#initiate();
 		while (true) {
-			if (this.error) {
-				throw new Error(this.error);
-			} else if (this.properties.status === 'completed') {
+			if (this.properties.status === 'completed') {
 				break;
 			} else if (this.properties.status === 'failed') {
-				throw new Error(`Query job failed with message: ${this.properties.errorMessage}`);
+				throw new JobError({ kind: 'query', status: 'failed', message: this.properties.errorMessage });
 			} else if (this.properties.status === 'cancelled') {
-				throw new Error(`Query job was cancelled`);
+				throw new JobError({ kind: 'query', status: 'cancelled', message: 'Query job was cancelled' });
 			} else {
 				await new Promise((resolve) => setTimeout(resolve, 2000));
 				await this.get();

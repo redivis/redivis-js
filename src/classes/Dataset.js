@@ -1,95 +1,109 @@
-import Table from './Table.js';
+import Base from './Base.js';
+import Organization from './Organization.js';
 import Query from './Query.js';
+import Table from './Table.js';
+import User from './User.js';
 import Version from './Version.js';
 import { makeRequest, makePaginatedRequest } from '../common/apiRequest.js';
+import { parseArgs } from '../common/args.js';
+import { getConfigValue } from '../common/config.js';
+import { ValueError } from '../common/errors.js';
+import { splitReference } from '../common/references.js';
 
-// TODO: listAccess
-// TODO: finalize sample, versions
+export default class Dataset extends Base {
+	/**
+	 * @param {string} name The dataset's name, optionally with a reference id and version (`name:abc1:v1_0`). If no
+	 *   owner is given, this may be fully qualified (`owner.name`), or else the owner is the configured defaultUser or
+	 *   defaultOrganization.
+	 * @param {object} [options]
+	 * @param {string} [options.version] The version tag, e.g. `v1_0`, `current`, or `next`
+	 * @param {User} [options.user]
+	 * @param {Organization} [options.organization]
+	 * @param {object} [options.properties]
+	 */
+	constructor(...args) {
+		super();
+		let { name, version, user, organization, properties } = parseArgs(args, ['name'], {
+			allowed: ['version', 'user', 'organization', 'properties'],
+		});
+		if (typeof user === 'string') user = new User(user);
+		if (typeof organization === 'string') organization = new Organization(organization);
 
-export default class Dataset {
-	constructor(argName, options = {}) {
-		if (typeof argName === 'object') {
-			options = argName;
-			argName = undefined;
+		if (!user && !organization) {
+			const parts = splitReference(name);
+			if (parts.length === 2) {
+				// Whether the owner is a user or an organization is resolved once we know more about the dataset
+				[user, organization] = [new User(parts[0]), new Organization(parts[0])];
+				name = parts[1];
+			} else if (getConfigValue('defaultUser')) {
+				user = new User(getConfigValue('defaultUser'));
+			} else if (getConfigValue('defaultOrganization')) {
+				organization = new Organization(getConfigValue('defaultOrganization'));
+			} else {
+				throw new ValueError(
+					`Invalid dataset reference "${name}". It must be fully qualified (owner.dataset) if no owner is specified.`,
+				);
+			}
 		}
-		const { name = argName, version = 'current', user, organization, properties = {} } = options;
 
-		this.name = name;
-		this.version = version;
+		this.name = name.split(':')[0];
 		this.user = user;
 		this.organization = organization;
-		this.identifier = `${(this.organization || this.user).name}.${this.name}:${this.version}`;
-		this.uri = `/datasets/${encodeURIComponent(this.identifier)}`;
+
+		const referenceId = name.replace(/:(v\d+[._]\d+|current|next|sample)/gi, '').split(':')[1];
+		if (!version) {
+			version = name.match(/:(v\d+[._]\d+|current|next)/i)?.[1];
+		}
+		this.versionTag = normalizeVersionTag(version);
+
+		this.scopedReference =
+			properties?.scopedReference ??
+			`${this.name}${referenceId ? `:${referenceId}` : ''}${this.versionTag ? `:${this.versionTag}` : ''}`;
+		this.qualifiedReference =
+			properties?.qualifiedReference ?? `${(this.organization || this.user).name}.${this.scopedReference}`;
+		this.uri = properties?.uri ?? `/datasets/${encodeURIComponent(this.qualifiedReference)}`;
 		this.properties = properties;
 	}
 
-	toString() {
-		return JSON.stringify(this.properties, null, 2);
+	table(...args) {
+		const { name } = parseArgs(args, ['name']);
+		return new Table(name, { dataset: this });
 	}
 
-	getProperty(property) {
-		return this.properties?.[property];
+	query(...args) {
+		const { query } = parseArgs(args, ['query']);
+		return new Query(query, { defaultDataset: this.qualifiedReference });
 	}
 
-	table(name, options = {}) {
-		return new Table({ name, ...options, dataset: this });
-	}
-
-	query(query, options = {}) {
-		return new Query({ query, ...options, defaultDataset: this });
-	}
-
-	async exists() {
-		try {
-			await makeRequest({ method: 'GET', path: this.uri });
-		} catch (e) {
-			if (e.status !== 404) {
-				throw e;
-			}
-			return false;
-		}
-		return true;
-	}
-
-	async get() {
-		this.properties = await makeRequest({ method: 'GET', path: this.uri });
-		this.uri = this.properties.uri;
-		return this;
-	}
-
-	async create({ publicAccessLevel = 'none', description } = {}) {
-		let path;
-		if (this.organization) {
-			path = `/organizations/${this.organization.name}/datasets`;
-		} else {
-			path = `/users/${this.user.name}/datasets`;
-		}
-
-		this.properties = await makeRequest({
-			method: 'POST',
-			path,
-			payload: {
-				name: this.name,
-				description,
-				publicAccessLevel,
-			},
+	async create(...args) {
+		const { publicAccessLevel, description } = parseArgs(args, [], {
+			defaults: { publicAccessLevel: 'none' },
+			allowed: ['description'],
 		});
-		this.uri = this.properties.uri;
+		await this._rectifyAmbiguousOwner();
+		const path = this.organization ? `${this.organization.uri}/datasets` : `${this.user.uri}/datasets`;
+
+		this._updateProperties(
+			await makeRequest({
+				method: 'POST',
+				path,
+				payload: { name: this.name, description, publicAccessLevel },
+			}),
+		);
 		return this;
 	}
 
-	async update({ name, publicAccessLevel, description } = {}) {
+	async update(...args) {
+		const { name, publicAccessLevel, description } = parseArgs(args, [], {
+			allowed: ['name', 'publicAccessLevel', 'description'],
+		});
 		const payload = {};
 
 		if (name) payload.name = name;
 		if (publicAccessLevel) payload.publicAccessLevel = publicAccessLevel;
-		if (description) payload.description = description;
+		if (description !== undefined) payload.description = description;
 
-		this.properties = await makeRequest({
-			method: 'POST',
-			path: this.uri,
-			payload,
-		});
+		this._updateProperties(await makeRequest({ method: 'PATCH', path: this.uri, payload }));
 		return this;
 	}
 
@@ -97,52 +111,74 @@ export default class Dataset {
 		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
 
-	async createNextVersion({ ignoreIfExists = false } = {}) {
-		if (!this.properties?.nextVersion) {
+	async createNextVersion(...args) {
+		const { ifNotExists } = parseArgs(args, [], { defaults: { ifNotExists: false } });
+		if (!this.properties || !('nextVersion' in this.properties)) {
 			await this.get();
 		}
 		if (!this.properties.nextVersion) {
 			await makeRequest({ method: 'POST', path: `${this.uri}/versions` });
-		} else if (!ignoreIfExists) {
-			throw new Error(
-				`Next version already exists at ${this.properties.nextVersion.datasetUri}. To avoid this error, set option ignoreIfExists to true`,
+		} else if (!ifNotExists) {
+			throw new ValueError(
+				`Next version already exists at ${this.properties.nextVersion.datasetUri}. To avoid this error, set the ifNotExists option to true`,
 			);
 		}
-		return new Dataset(this.name, {
+		await this._rectifyAmbiguousOwner();
+		return new Dataset(this.scopedReference, {
 			user: this.user,
 			organization: this.organization,
+			version: 'next',
 		}).get();
 	}
 
 	async release() {
-		await makeRequest({
-			method: 'POST',
-			path: `${this.uri}/versions/next/release`,
-		});
-		return new Dataset(this.name, {
-			user: this.user,
-			organization: this.organization,
-			version: 'current',
-		}).get();
+		const { datasetUri } = await makeRequest({ method: 'POST', path: `${this.uri}/versions/next/release` });
+		this.uri = datasetUri;
+		return this.get();
 	}
 
-	async listVersions({ maxResults } = {}) {
-		let versions = await makePaginatedRequest({
-			path: `${this.uri}/versions`,
-			pageSize: 100,
-			maxResults,
-		});
-		versions = versions.map((version) => new Version({ ...version, dataset: this }));
-
-		return versions;
+	async listVersions(...args) {
+		const { maxResults } = parseArgs(args, ['maxResults']);
+		const versions = await makePaginatedRequest({ path: `${this.uri}/versions`, pageSize: 100, maxResults });
+		return versions.map((version) => new Version(version.tag, { dataset: this, properties: version }));
 	}
 
-	async listTables({ maxResults } = {}) {
-		const tables = await makePaginatedRequest({
-			path: `${this.uri}/tables`,
-			pageSize: 100,
-			maxResults,
-		});
+	async listTables(...args) {
+		const { maxResults } = parseArgs(args, ['maxResults']);
+		const tables = await makePaginatedRequest({ path: `${this.uri}/tables`, pageSize: 100, maxResults });
 		return tables.map((table) => new Table(table.name, { dataset: this, properties: table }));
 	}
+
+	_updateProperties(properties) {
+		super._updateProperties(properties);
+		this.qualifiedReference = properties.qualifiedReference;
+		this.scopedReference = properties.scopedReference;
+		this.name = properties.name;
+		if (this.user && this.organization && properties.owner?.kind) {
+			if (properties.owner.kind === 'user') {
+				this.organization = undefined;
+			} else {
+				this.user = undefined;
+			}
+		}
+	}
+
+	// When the owner came from a qualified reference, we don't know whether it's a user or an organization until the
+	//   API tells us (or we ask)
+	async _rectifyAmbiguousOwner() {
+		if (this.user && this.organization) {
+			if (await this.organization.exists()) {
+				this.user = undefined;
+			} else {
+				this.organization = undefined;
+			}
+		}
+	}
+}
+
+export function normalizeVersionTag(tag) {
+	if (tag && tag !== 'current' && tag !== 'next' && !tag.toLowerCase().startsWith('v')) {
+		return `v${tag}`;
+	}
+	return tag || undefined;
 }

@@ -1,26 +1,24 @@
-import { makeRequest } from '../common/apiRequest.js';
+import Base from './Base.js';
+import { parseArgs } from '../common/args.js';
+import { normalizeVersionTag } from './Dataset.js';
 
-export default class Version {
-	constructor(argName, options = {}) {
-		if (typeof argName === 'object') {
-			options = argName;
-			argName = undefined;
-		}
-		const { tag = argName, dataset, properties } = options;
+export default class Version extends Base {
+	/**
+	 * @param {string} tag The version tag, e.g. `v1_0`, `current`, or `next`
+	 * @param {object} options
+	 * @param {import('./Dataset.js').default} options.dataset
+	 * @param {object} [options.properties]
+	 */
+	constructor(...args) {
+		super();
+		const { tag, dataset, properties } = parseArgs(args, ['tag'], { allowed: ['dataset', 'properties'] });
+		this.tag = normalizeVersionTag(tag);
 		this.dataset = dataset;
-		this.tag = tag;
-		this.identifier = `${(this.dataset.organization || this.dataset.user).name}.${this.dataset.name}:${this.tag}`;
-		this.uri = `/datasets/${encodeURIComponent(this.identifier)}/versions/${this.tag}`;
+		this.uri = properties?.uri ?? `${dataset.uri}/versions/${encodeURIComponent(this.tag)}`;
 		this.properties = properties;
 	}
 
-	getProperty() {
-		return this.properties?.[property];
-	}
-
-	async get() {
-		this.properties = await makeRequest({ method: 'GET', path: this.uri });
-		this.uri = this.properties.uri;
-		return this;
+	toString() {
+		return `<Version ${this.dataset.qualifiedReference}:${this.tag}>`;
 	}
 }

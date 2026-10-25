@@ -1,5 +1,7 @@
 ## Testing
-To test within a node environment, run `npm run test`
+`npm test` runs the offline test suite (in `test/offline`), which mocks the Redivis API.
+
+`npm run test:live` runs the tests in `test/live` against the real API. They're skipped unless `REDIVIS_API_TOKEN` is set.
 
 To test within a browser environment, run `npm run test-browser`
 

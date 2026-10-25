@@ -1,42 +1,33 @@
-import { makeRequest } from '../common/apiRequest.js';
-// TODO: add statistics, getRows
+import Base from './Base.js';
+import { parseArgs } from '../common/args.js';
 
-export default class Variable {
-	constructor(argName, options = {}) {
-		if (typeof argName === 'object') {
-			options = argName;
-			argName = undefined;
-		}
-		const { name = argName, label, description, valueLabels, type, table, query, properties = {} } = options;
+export default class Variable extends Base {
+	/**
+	 * @param {string} name
+	 * @param {object} options One of table, query, or upload is required
+	 * @param {import('./Table.js').default} [options.table]
+	 * @param {import('./Query.js').default} [options.query]
+	 * @param {object} [options.upload]
+	 * @param {object} [options.properties]
+	 */
+	constructor(...args) {
+		super();
+		const { name, table, query, upload, properties } = parseArgs(args, ['name'], {
+			allowed: ['table', 'query', 'upload', 'properties'],
+		});
 		this.name = name;
-		this.type = type;
 		this.table = table;
 		this.query = query;
-		this.properties = { name, type, label, description, valueLabels, ...properties };
-		this.uri = `${(this.table || this.query).uri}/variables/${this.name}`;
+		this.upload = upload;
+		this.properties = properties;
+		this.uri = properties?.uri ?? `${(table || query || upload).uri}/variables/${encodeURIComponent(name)}`;
 	}
-	getProperty(prop) {
-		return this.properties?.[prop];
+
+	get type() {
+		return this.properties?.type;
 	}
+
 	toString() {
-		return JSON.stringify(this.properties, null, 2);
-	}
-
-	async exists() {
-		try {
-			await makeRequest({ method: 'GET', path: this.uri });
-		} catch (e) {
-			if (e.status !== 404) {
-				throw e;
-			}
-			return false;
-		}
-		return true;
-	}
-
-	async get() {
-		this.properties = await makeRequest({ method: 'GET', path: this.uri });
-		this.uri = this.properties.uri;
-		return this;
+		return `<Variable ${this.name}${this.type ? ` (${this.type})` : ''}>`;
 	}
 }
