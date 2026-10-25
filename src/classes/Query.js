@@ -10,12 +10,12 @@ export default class Query {
 			options = argsQuery;
 			argsQuery = undefined;
 		}
-		const { query = argsQuery, defaultProject, defaultDataset } = options;
+		const { query = argsQuery, defaultWorkflow, defaultDataset } = options;
 		const payload = {
 			query,
 		};
-		if (defaultProject) {
-			payload.defaultProject = defaultProject.identifier;
+		if (defaultWorkflow) {
+			payload.defaultWorkflow = defaultWorkflow.identifier;
 		} else if (defaultDataset) {
 			payload.defaultDataset = defaultDataset.identifier;
 		}

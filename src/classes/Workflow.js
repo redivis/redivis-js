@@ -2,7 +2,7 @@ import Query from './Query.js';
 import Table from './Table.js';
 import { makePaginatedRequest } from '../common/apiRequest.js';
 
-export default class Project {
+export default class Workflow {
 	constructor(argName, options = {}) {
 		if (typeof argName === 'object') {
 			options = argName;
@@ -12,20 +12,20 @@ export default class Project {
 		this.user = user;
 		this.name = name;
 		this.identifier = `${user.name}.${name}`;
-		this.uri = `/projects/${encodeURIComponent(this.identifier)}`;
+		this.uri = `/workflows/${encodeURIComponent(this.identifier)}`;
 		this.properties = properties;
 	}
 
-	getProperty() {
+	getProperty(property) {
 		return this.properties?.[property];
 	}
 
 	query(query, options = {}) {
-		return new Query({ query, ...options, defaultProject: this });
+		return new Query({ query, ...options, defaultWorkflow: this });
 	}
 
 	table(name, options = {}) {
-		return new Table({ name, ...options, project: this });
+		return new Table({ name, ...options, workflow: this });
 	}
 
 	async listTables({ maxResults, includeDatasetTables } = {}) {
@@ -37,6 +37,6 @@ export default class Project {
 			query: { includeDatasetTables },
 		});
 
-		return tables.map((table) => new Table(table.name, { project: this, properties: table }));
+		return tables.map((table) => new Table(table.name, { workflow: this, properties: table }));
 	}
 }

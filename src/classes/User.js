@@ -1,8 +1,8 @@
 import Dataset from './Dataset.js';
-import Project from './Project.js';
+import Workflow from './Workflow.js';
 
 // TODO: list datasets
-// TODO: list projects
+// TODO: list workflows
 
 export default class User {
 	constructor(name) {
@@ -12,7 +12,7 @@ export default class User {
 	dataset(name, options = {}) {
 		return new Dataset({ name, ...options, user: this });
 	}
-	project(name, options = {}) {
-		return new Project({ name, ...options, user: this });
+	workflow(name, options = {}) {
+		return new Workflow({ name, ...options, user: this });
 	}
 }

@@ -9,18 +9,18 @@ export default class Table {
 			options = argName;
 			argName = undefined;
 		}
-		const { name = argName, sample = false, dataset, project, properties } = options;
-		const parent = dataset || project;
+		const { name = argName, sample = false, dataset, workflow, properties } = options;
+		const parent = dataset || workflow;
 		const owner = parent.organization || parent.user;
 		const sampleString = sample ? ':sample' : '';
 		const versionString = dataset ? `:${dataset.version}` : '';
 		this.hasPopulatedProperties = false;
 		this.name = name;
 		this.dataset = dataset;
-		this.project = project;
+		this.workflow = workflow;
 		this.identifier = `${owner.name}.${parent.name}${versionString}.${this.name}${sampleString}`;
 		this.uri = `/tables/${encodeURIComponent(this.identifier)}`;
-		this.properties = { name, identifier: this.identifier, uri: this.uri, dataset, project, ...properties };
+		this.properties = { name, identifier: this.identifier, uri: this.uri, dataset, workflow, ...properties };
 	}
 
 	// TODO: validate properties usage
