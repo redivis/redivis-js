@@ -43,6 +43,15 @@
 				'toArrowTable over the browser limit (expect a ValueError)',
 				async () => (await table.toArrowTable()).numRows,
 			);
+			const fileTable = redivis.table('demo.chest_x_ray8:05nw:v1_0.files:dhmd');
+			await check('toDirectory', async () => {
+				const directory = await fileTable.toDirectory();
+				const again = await fileTable.toDirectory();
+				return { files: directory.children.size, reusedUnchangedListing: again === directory };
+			});
+			await check('file.download (expect a ValueError, since it needs Node)', async () =>
+				(await fileTable.listFiles(1))[0].download(),
+			);
 			await check('query', () => redivis.query('SELECT 1+1 AS two').toRowsArray());
 			output.textContent += '\nDone';
 		</script>

@@ -233,6 +233,10 @@ export default class Table extends TabularReader {
 		return variables.map((variable) => new Variable(variable.name, { table: this, properties: variable }));
 	}
 
+	async _getFileSource() {
+		return { table: this };
+	}
+
 	async _getReadInfo() {
 		// Always refetched, since the table may have changed
 		await this.get();

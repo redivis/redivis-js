@@ -61,6 +61,16 @@ export default class Query extends TabularReader {
 		return variables.map((variable) => new Variable(variable.name, { query: this, properties: variable }));
 	}
 
+	async _getFileSource() {
+		await this._waitForFinish();
+		return { query: this };
+	}
+
+	_getExportName() {
+		const finishedAt = this.properties.finishedAt ? new Date(this.properties.finishedAt) : new Date();
+		return `query_${finishedAt.toISOString().replace(/[.:]/g, '_')}`;
+	}
+
 	async _getReadInfo() {
 		await this._waitForFinish();
 		return {

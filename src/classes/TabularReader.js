@@ -1,8 +1,10 @@
 import Base from './Base.js';
+import Export from './Export.js';
 import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
-import { ValueError } from '../common/errors.js';
-import { isNode } from '../common/node.js';
+import { NotFoundError, ValueError } from '../common/errors.js';
+import { getRecentDirectory, listDirectory } from '../common/files.js';
+import { isNode, requireNode } from '../common/node.js';
 import {
 	DEFAULT_BROWSER_MAX_BYTES,
 	LIST_ROWS_MAX_BYTES,
@@ -122,6 +124,98 @@ export default class TabularReader extends Base {
 		);
 	}
 
+	/**
+	 * Lists the files indexed by this table (or query result), as a Directory. The listing is cached, and only
+	 * downloaded again if it has changed.
+	 *
+	 * @param {object} [options]
+	 * @param {string} [options.fileIdVariable] The variable containing file ids, if not `file_id`
+	 * @param {string} [options.fileNameVariable] The variable containing file names, if not `file_name`
+	 * @param {AbortSignal} [options.signal]
+	 * @returns {Promise<import('./Directory.js').default>}
+	 */
+	async toDirectory(...args) {
+		const { fileIdVariable, fileNameVariable, signal } = parseArgs(args, [], {
+			allowed: ['fileIdVariable', 'fileNameVariable', 'signal'],
+		});
+		const source = await this._getFileSource();
+		return listDirectory({ ...source, fileIdVariable, fileNameVariable, signal });
+	}
+
+	/**
+	 * Returns the file at a path within this table's (or query result's) files.
+	 * @param {string} path
+	 * @returns {Promise<import('./File.js').default>}
+	 */
+	async file(...args) {
+		const { path } = parseArgs(args, ['path']);
+		const source = await this._getFileSource();
+		// A listing from the last 30 seconds is recent enough
+		const directory = getRecentDirectory({ ...source, maxAge: 30_000 }) ?? (await listDirectory(source));
+		const node = directory.get(path);
+		if (!node) {
+			throw new NotFoundError({ description: `No file found at path "${path}"` });
+		} else if (!node.uri) {
+			throw new ValueError(`"${path}" is a directory, not a file`);
+		}
+		return node;
+	}
+
+	/**
+	 * Lists every file indexed by this table (or query result).
+	 *
+	 * @param {number} [maxResults]
+	 * @param {object} [options] The same options as toDirectory()
+	 * @returns {Promise<import('./File.js').default[]>}
+	 */
+	async listFiles(...args) {
+		const { maxResults, ...options } = parseArgs(args, ['maxResults'], {
+			allowed: ['fileIdVariable', 'fileNameVariable', 'signal'],
+		});
+		const directory = await this.toDirectory(options);
+		return directory.list(maxResults, { mode: 'files', recursive: true });
+	}
+
+	/**
+	 * Exports the data to files (in Node), and downloads them.
+	 *
+	 * @param {string} [path] A file path, if the export is a single file; otherwise (or if it's an existing directory,
+	 *   or ends with a separator) the directory to download into. Defaults to the current working directory.
+	 * @param {object} [options]
+	 * @param {string} [options.format='csv'] e.g. `csv`, `parquet`, `avro`, `ndjson`, `stata`, `sas`, `spss`
+	 * @param {boolean} [options.overwrite=false]
+	 * @param {number} [options.maxConcurrency=16] The number of files to download at once
+	 * @param {(progress: object) => void} [options.onProgress]
+	 * @param {AbortSignal} [options.signal]
+	 * @returns {Promise<string[]>} The paths of the downloaded files
+	 */
+	async download(...args) {
+		const { path, format, ...options } = parseArgs(args, ['path'], {
+			defaults: { format: 'csv' },
+			allowed: ['overwrite', 'maxConcurrency', 'onProgress', 'signal'],
+		});
+		requireNode('Downloading files');
+		await this._getReadInfo();
+		const properties = await makeRequest({
+			method: 'POST',
+			path: `${this.uri}/exports`,
+			payload: { format },
+			signal: options.signal,
+		});
+		const exportJob = new Export(properties.id, { fileName: this._getExportName(), properties });
+		return exportJob.downloadFiles(path, options);
+	}
+
+	// The table or query that this instance's files belong to
+	async _getFileSource() {
+		throw new ValueError('Listing files is only supported for tables and queries');
+	}
+
+	// The name of downloaded export files
+	_getExportName() {
+		return (this.properties?.name || 'export').replace(/\W+/g, '_').toLowerCase();
+	}
+
 	// Waits for the instance to be readable, returning what we know about its size:
 	//   { numRows, numBytes, canListRows }
 	async _getReadInfo() {
@@ -218,6 +312,10 @@ export class ReadStream extends TabularReader {
 
 	async toReadStreams() {
 		throw new ValueError('A read stream is already part of a read session');
+	}
+
+	async download() {
+		throw new ValueError("Read streams can't be downloaded; download their table, query, or upload instead");
 	}
 
 	async _getReadInfo() {
