@@ -32,7 +32,8 @@
 		"redivis"
 	],
 	"dependencies": {
-		"apache-arrow": "^21.0.0"
+		"apache-arrow": "^21.0.0",
+		"temporal-polyfill": "^1.0.5"
 	},
 	"devDependencies": {
 		"prettier": "3.9.10"

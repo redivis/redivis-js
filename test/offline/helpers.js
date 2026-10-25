@@ -16,6 +16,7 @@ export function mockFetch(handler) {
 			path: url.pathname.replace('/api/v1', ''),
 			method: init.method || 'GET',
 			headers: init.headers || {},
+			signal: init.signal,
 			body: init.body === undefined ? undefined : JSON.parse(init.body),
 		};
 		requests.push(request);
@@ -28,5 +29,18 @@ export function jsonResponse(body, { status = 200, headers = {} } = {}) {
 	return new Response(JSON.stringify(body), {
 		status,
 		headers: { 'content-type': 'application/json', ...headers },
+	});
+}
+
+// Serializes arrow record batches as an IPC stream body. A `sentinel` adds the empty batch that ends a read stream.
+export async function arrowResponse(batches, { sentinel = false, status = 200 } = {}) {
+	const { RecordBatchStreamWriter } = await import('apache-arrow');
+	const writer = new RecordBatchStreamWriter();
+	for (const batch of batches) writer.write(batch);
+	if (sentinel) writer.write(batches[0].slice(0, 0));
+	writer.finish();
+	return new Response(writer.toUint8Array(true), {
+		status,
+		headers: { 'content-type': 'application/vnd.apache.arrow.stream' },
 	});
 }

@@ -1,7 +1,6 @@
 import { canReauthorize, getRequestConfig, refreshCredentials } from './auth.js';
 import { createApiError, NetworkError } from './errors.js';
 import { isNode } from './node.js';
-import { tableFromIPC } from 'apache-arrow';
 import packageJson from '../../package.json' with { type: 'json' };
 
 const { version } = packageJson;
@@ -223,7 +222,8 @@ async function parseErrorResponse(response, method) {
 	}
 }
 
-function sleep(ms, signal) {
+// Resolves after `ms`, or rejects as soon as the signal aborts
+export function sleep(ms, signal) {
 	return new Promise((resolve, reject) => {
 		if (signal?.aborted) {
 			return reject(signal.reason);
@@ -238,117 +238,4 @@ function sleep(ms, signal) {
 			{ once: true },
 		);
 	});
-}
-
-// TODO: use temporal for dates + times
-// Dates do seem to come down as actual dates, but maybe in the future we'll use Temporal API
-function dateTransformer(val) {
-	return new Date(val);
-}
-
-function dateTimeTransformer(val) {
-	return new Date(val);
-}
-
-// Times are stored as a bigint representing microseconds. Convert to seconds as a standard Number (not bigint)
-function timeTransformer(val) {
-	return Number(val) / 1e6;
-}
-
-// Map BigInts to javascript numbers
-// TODO: in the future, this should be configurable
-function integerTransformer(val) {
-	return Number(val);
-}
-
-export async function makeRowsRequest({
-	uri,
-	maxResults,
-	mappedVariables,
-	selectedVariables,
-	createReadSession = true,
-	requestedStreamCount = 1, // 1 seems to be the fastest
-}) {
-	const variableTypeTransformerMap = new Map(
-		mappedVariables
-			.map((variable) => {
-				if (variable.type === 'integer') {
-					return [variable.name.toLowerCase(), integerTransformer];
-				} else if (variable.type === 'date') {
-					return [variable.name.toLowerCase(), dateTransformer];
-				} else if (variable.type === 'dateTime') {
-					return [variable.name.toLowerCase(), dateTimeTransformer];
-				} else if (variable.type === 'time') {
-					return [variable.name.toLowerCase(), timeTransformer];
-				}
-			})
-			.filter((val) => val),
-	);
-
-	let finalResults;
-	if (createReadSession) {
-		const readSession = await makeRequest({
-			method: 'POST',
-			path: `${uri}/readSessions`,
-			payload: {
-				maxResults,
-				selectedVariables: selectedVariables,
-				format: 'arrow',
-				requestedStreamCount,
-			},
-		});
-
-		const parsedStreamData = await Promise.all(
-			readSession.streams.map(async ({ id }) => {
-				const response = await makeRequest({
-					method: 'GET',
-					path: `/readStreams/${id}`,
-					parseResponse: false,
-				});
-				return parseArrowStream(response, variableTypeTransformerMap);
-			}),
-		);
-
-		finalResults = [].concat(...parsedStreamData);
-	} else {
-		const arrowResponse = await makeRequest({
-			method: 'GET',
-			path: `${uri}/rows`,
-			parseResponse: false,
-			query: {
-				maxResults,
-				selectedVariables,
-				format: 'arrow',
-			},
-		});
-
-		finalResults = await parseArrowStream(arrowResponse, variableTypeTransformerMap);
-	}
-
-	return finalResults;
-}
-
-async function parseArrowStream(response, variableTypeTransformerMap) {
-	const table = await tableFromIPC(response);
-	const casedVariableTypeTransformerMap = new Map(
-		table.schema.fields
-			.map(({ name }) => {
-				if (variableTypeTransformerMap.has(name.toLowerCase())) {
-					return [name, variableTypeTransformerMap.get(name.toLowerCase())];
-				}
-			})
-			.filter((val) => val),
-	);
-
-	const mappedArray = table.toArray().map((row) => row.toJSON()); // Converts the rows to JS arrays of values
-
-	for (const row of mappedArray) {
-		for (const [name, transformer] of casedVariableTypeTransformerMap.entries()) {
-			if (row[name] !== null) {
-				row[name] = transformer(row[name]);
-			}
-		}
-	}
-
-	return mappedArray;
 }

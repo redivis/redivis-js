@@ -1,14 +1,14 @@
-import Base from './Base.js';
 import Dataset from './Dataset.js';
+import TabularReader from './TabularReader.js';
 import Variable from './Variable.js';
 import Workflow from './Workflow.js';
-import { makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
+import { makePaginatedRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
 import { splitReference } from '../common/references.js';
 
-export default class Table extends Base {
+export default class Table extends TabularReader {
 	/**
 	 * @param {string} name The table's name. If no dataset or workflow is given, this may be fully qualified
 	 *   (`owner.dataset_or_workflow.table`), or else the table is resolved within the configured defaultWorkflow or
@@ -77,35 +77,10 @@ export default class Table extends Base {
 		return variables.map((variable) => new Variable(variable.name, { table: this, properties: variable }));
 	}
 
-	async listRows(...args) {
-		let { maxResults, variables } = parseArgs(args, ['maxResults'], { allowed: ['variables'] });
-
+	async _getReadInfo() {
+		// Always refetched, since the table may have changed
 		await this.get();
-		const mappedVariables = await this.listVariables();
-		if (maxResults) {
-			maxResults = Math.min(maxResults, this.properties.numRows);
-		}
-
-		let selectedVariables;
-		if (variables?.length) {
-			selectedVariables = variables.map((name) => {
-				const variable = mappedVariables.find(
-					({ name: variableName }) => variableName.toLowerCase() === name.toLowerCase(),
-				);
-				if (!variable) {
-					throw new ValueError(`The variable ${name} was not found in this table`);
-				}
-				return variable.name;
-			});
-		}
-
-		return makeRowsRequest({
-			uri: this.uri,
-			maxResults,
-			mappedVariables,
-			createReadSession: this.properties.numBytes > 1e8, // 100MB
-			selectedVariables,
-		});
+		return { numRows: this.properties.numRows, numBytes: this.properties.numBytes, canListRows: true };
 	}
 
 	_updateProperties(properties) {

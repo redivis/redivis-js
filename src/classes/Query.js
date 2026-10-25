@@ -1,11 +1,11 @@
-import Base from './Base.js';
+import TabularReader from './TabularReader.js';
 import Variable from './Variable.js';
-import { makeRequest, makePaginatedRequest, makeRowsRequest } from '../common/apiRequest.js';
+import { makeRequest, makePaginatedRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { JobError } from '../common/errors.js';
 
-export default class Query extends Base {
+export default class Query extends TabularReader {
 	#initiation = null;
 	#payload = null;
 
@@ -61,19 +61,13 @@ export default class Query extends Base {
 		return variables.map((variable) => new Variable(variable.name, { query: this, properties: variable }));
 	}
 
-	async listRows(...args) {
-		let { maxResults } = parseArgs(args, ['maxResults']);
+	async _getReadInfo() {
 		await this._waitForFinish();
-		maxResults =
-			maxResults === undefined
-				? this.properties.outputNumRows
-				: Math.min(maxResults, this.properties.outputNumRows);
-		return makeRowsRequest({
-			uri: this.uri,
-			maxResults,
-			createReadSession: this.properties.outputNumBytes > 1e8, // 100MB
-			mappedVariables: await this.listVariables(),
-		});
+		return {
+			numRows: this.properties.outputNumRows,
+			numBytes: this.properties.outputNumBytes,
+			canListRows: true,
+		};
 	}
 
 	// The query is only created once, however many callers are waiting on it
