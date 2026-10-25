@@ -1,5 +1,5 @@
 import { Type } from 'apache-arrow';
-import { floorDiv } from './arrowTypes.js';
+import { floorDiv, scaleToMicros } from './arrowTypes.js';
 
 const MICROS_PER_MILLI = 1000n;
 
@@ -67,9 +67,9 @@ function getConverter(type, { bigInt, Temporal }) {
 					: date;
 			};
 		case Type.Timestamp:
-			// The reader always conforms timestamps to microseconds, which arrow-js returns as lossy numbers
+			// Read from the underlying values, since arrow-js returns timestamps as (lossy) numbers of milliseconds
 			return (data, i) => {
-				const micros = data.values[i];
+				const micros = scaleToMicros(BigInt(data.values[i]), type.unit);
 				const millis = floorDiv(micros, MICROS_PER_MILLI);
 				const date = new Date(Number(millis));
 				if (!Temporal) {
@@ -88,7 +88,7 @@ function getConverter(type, { bigInt, Temporal }) {
 			};
 		case Type.Time:
 			return (data, i) => {
-				const micros = Number(data.values[i]);
+				const micros = Number(scaleToMicros(BigInt(data.values[i]), type.unit));
 				const parts = [
 					Math.floor(micros / 3_600_000_000),
 					Math.floor(micros / 60_000_000) % 60,

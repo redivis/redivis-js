@@ -1,11 +1,14 @@
 import Dataset from './Dataset.js';
 import TabularReader from './TabularReader.js';
+import Upload from './Upload.js';
 import Variable from './Variable.js';
 import Workflow from './Workflow.js';
 import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
+import { mapConcurrent } from '../common/pool.js';
+import { createTempUploads, resolveFiles, uploadToTempUpload } from '../common/upload.js';
 import { definedValues, splitReference } from '../common/references.js';
 
 export default class Table extends TabularReader {
@@ -124,6 +127,99 @@ export default class Table extends TabularReader {
 		const { variables } = parseArgs(args, ['variables']);
 		await this._resolveForWrite();
 		await makeRequest({ method: 'PATCH', path: `${this.uri}/variables`, payload: { variables } });
+	}
+
+	/**
+	 * @param {string} [name] The upload's name. Defaults to the name of the uploaded file, if any.
+	 * @returns {Upload}
+	 */
+	upload(...args) {
+		const { name } = parseArgs(args, ['name']);
+		return new Upload(name, { table: this });
+	}
+
+	async listUploads(...args) {
+		const { maxResults } = parseArgs(args, ['maxResults']);
+		const uploads = await makePaginatedRequest({ path: `${this.uri}/uploads`, pageSize: 100, maxResults });
+		return uploads.map((upload) => new Upload(upload.name, { table: this, properties: upload }));
+	}
+
+	/**
+	 * Adds files to a file index table.
+	 *
+	 * @param {object} options One of files or directory is required
+	 * @param {Array<string|File|Blob|{name: string, data: Blob|ArrayBuffer|ArrayBufferView|string}|{path: string, name?: string}>|FileList} [options.files]
+	 *   The files to add: paths (in Node), Files (named by their path within a picked directory, if any), or
+	 *   `{ name, data }` objects. String data is uploaded as UTF-8 text.
+	 * @param {string} [options.directory] A local directory (in Node), whose files are all added, named by their path
+	 *   within it. Hidden files are skipped.
+	 * @param {number} [options.maxParallelization] The number of files to upload at once
+	 * @param {(progress: {bytesUploaded: number, totalBytes: number, filesUploaded: number, totalFiles: number}) => void} [options.onProgress]
+	 * @param {AbortSignal} [options.signal]
+	 * @returns {Promise<void>}
+	 */
+	async addFiles(...args) {
+		const { files, directory, maxParallelization, onProgress, signal } = parseArgs(args, [], {
+			defaults: { maxParallelization: Math.min(100, (globalThis.navigator?.hardwareConcurrency || 4) * 5) },
+			allowed: ['files', 'directory', 'onProgress', 'signal'],
+		});
+		const resolvedFiles = await resolveFiles({ files, directory });
+		await this._resolveForWrite();
+
+		const totalBytes = resolvedFiles.reduce((total, { size }) => total + size, 0);
+		const bytesUploadedByFile = new Array(resolvedFiles.length).fill(0);
+		let bytesUploaded = 0;
+		let filesUploaded = 0;
+		const reportProgress = () =>
+			onProgress?.({ bytesUploaded, totalBytes, filesUploaded, totalFiles: resolvedFiles.length });
+
+		// Files are uploaded in batches (of at most 1000 files, and roughly a target size that adapts to throughput),
+		//   each of which is added to the table once it's uploaded
+		let targetBatchBytes = 1e8;
+		let index = 0;
+		while (index < resolvedFiles.length) {
+			const batchStart = index;
+			let batchBytes = 0;
+			while (index < resolvedFiles.length && index - batchStart < 1000 && batchBytes <= targetBatchBytes) {
+				batchBytes += resolvedFiles[index++].size;
+			}
+			const batch = resolvedFiles.slice(batchStart, index);
+			const startedAt = Date.now();
+
+			const tempUploads = await createTempUploads(this.uri, batch, { signal });
+			await mapConcurrent(
+				batch,
+				maxParallelization,
+				async (file, i) => {
+					const fileIndex = batchStart + i;
+					await uploadToTempUpload(tempUploads[i], file, {
+						signal,
+						onProgress: (bytes) => {
+							bytesUploaded += bytes - bytesUploadedByFile[fileIndex];
+							bytesUploadedByFile[fileIndex] = bytes;
+							reportProgress();
+						},
+					});
+				},
+				{ signal },
+			);
+
+			await makeRequest({
+				method: 'POST',
+				path: `${this.uri}/rawFiles`,
+				signal,
+				payload: { files: batch.map(({ name }, i) => ({ name, tempUploadId: tempUploads[i].id })) },
+			});
+			filesUploaded += batch.length;
+			reportProgress();
+
+			const elapsed = Date.now() - startedAt;
+			if (elapsed > 60_000) {
+				targetBatchBytes /= 2;
+			} else if (elapsed < 15_000) {
+				targetBatchBytes *= 2;
+			}
+		}
 	}
 
 	variable(...args) {

@@ -17,7 +17,8 @@ export function mockFetch(handler) {
 			method: init.method || 'GET',
 			headers: init.headers || {},
 			signal: init.signal,
-			body: init.body === undefined ? undefined : JSON.parse(init.body),
+			body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
+			rawBody: init.body,
 		};
 		requests.push(request);
 		return handler(request);

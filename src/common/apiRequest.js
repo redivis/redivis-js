@@ -1,5 +1,6 @@
 import { canReauthorize, getRequestConfig, refreshCredentials } from './auth.js';
 import { createApiError, NetworkError } from './errors.js';
+import { jsonReplacer } from './json.js';
 import { isNode } from './node.js';
 import packageJson from '../../package.json' with { type: 'json' };
 
@@ -53,7 +54,7 @@ export async function makeRequest({
 
 	let body;
 	if (payload !== undefined) {
-		body = JSON.stringify(payload);
+		body = JSON.stringify(payload, jsonReplacer);
 		headers['Content-Type'] = 'application/json';
 	}
 

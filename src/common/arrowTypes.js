@@ -205,7 +205,7 @@ function toTimeMicros(value, sourceType) {
 	return undefined;
 }
 
-function scaleToMicros(value, unit) {
+export function scaleToMicros(value, unit) {
 	switch (unit) {
 		case TimeUnit.SECOND:
 			return value * 1_000_000n;
