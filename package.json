@@ -17,13 +17,22 @@
 		"test-browser": "(sleep 1 && open http://127.0.0.1:9000/test/browser) & python3 -m http.server 9000",
 		"release": "npm version",
 		"postversion": "git push --follow-tags && npm publish",
-		"test:live": "node --test test/live/*.test.js"
+		"test:live": "node --test test/live/*.test.js",
+		"build:types": "tsc -p tsconfig.json",
+		"prepublishOnly": "npm test && npm run build:types"
 	},
 	"type": "module",
-	"exports": "./index.js",
+	"exports": {
+		".": {
+			"types": "./types/index.d.ts",
+			"default": "./index.js"
+		}
+	},
+	"types": "./types/index.d.ts",
 	"files": [
 		"index.js",
-		"src"
+		"src",
+		"types"
 	],
 	"engines": {
 		"node": ">=20"
@@ -36,7 +45,8 @@
 		"temporal-polyfill": "^1.0.5"
 	},
 	"devDependencies": {
-		"prettier": "3.9.10"
+		"prettier": "3.9.10",
+		"typescript": "^6.0.3"
 	},
 	"prettier": {
 		"printWidth": 120,

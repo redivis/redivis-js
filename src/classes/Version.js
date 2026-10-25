@@ -8,14 +8,15 @@ export default class Version extends Base {
 	#dataset;
 
 	/**
-	 * @param {string} tag The version tag, e.g. `v1_0`, `current`, or `next`
-	 * @param {object} options
-	 * @param {Dataset} options.dataset
-	 * @param {object} [options.properties]
+	 * A version of a dataset.
+	 *
+	 * @param {[tag: string, options: {dataset: Dataset, properties?: Record<string, any>}] | [options: {tag: string, dataset: Dataset, properties?: Record<string, any>}]} args
+	 *   The version tag, e.g. `v1_0`, `current`, or `next`
 	 */
 	constructor(...args) {
 		super();
 		const { tag, dataset, properties } = parseArgs(args, ['tag'], { allowed: ['dataset', 'properties'] });
+		/** @type {string} */
 		this.tag = normalizeVersionTag(tag);
 		this.#dataset = dataset;
 		this.uri = properties?.uri ?? `${dataset.uri}/versions/${encodeURIComponent(this.tag)}`;
@@ -40,9 +41,7 @@ export default class Version extends Base {
 	}
 
 	/**
-	 * @param {object} options
-	 * @param {string} [options.label]
-	 * @param {string} [options.releaseNotes]
+	 * @param {[options: {label?: string, releaseNotes?: string}]} args
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {

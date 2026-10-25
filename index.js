@@ -22,42 +22,90 @@ export const setApiProxy = auth.setApiProxy;
 export { config, errors };
 export const makeApiRequest = makeRequest;
 
+/**
+ * @param {ConstructorParameters<typeof Organization>} args
+ * @returns {Organization}
+ */
 export function organization(...args) {
 	return new Organization(...args);
 }
 
+/**
+ * @param {ConstructorParameters<typeof User>} args
+ * @returns {User}
+ */
 export function user(...args) {
 	return new User(...args);
 }
 
+/**
+ * Returns a dataset, e.g. `redivis.dataset('owner.dataset_name')`.
+ *
+ * @param {ConstructorParameters<typeof Dataset>} args
+ * @returns {Dataset}
+ */
 export function dataset(...args) {
 	return new Dataset(...args);
 }
 
+/**
+ * Returns a workflow, e.g. `redivis.workflow('owner.workflow_name')`.
+ *
+ * @param {ConstructorParameters<typeof Workflow>} args
+ * @returns {Workflow}
+ */
 export function workflow(...args) {
 	return new Workflow(...args);
 }
 
+/**
+ * Returns a table, e.g. `redivis.table('owner.dataset_name.table_name')`.
+ *
+ * @param {ConstructorParameters<typeof Table>} args
+ * @returns {Table}
+ */
 export function table(...args) {
 	return new Table(...args);
 }
 
+/**
+ * Returns a SQL query, which runs once its results are first read.
+ *
+ * @param {ConstructorParameters<typeof Query>} args
+ * @returns {Query}
+ */
 export function query(...args) {
 	return new Query(...args);
 }
 
+/**
+ * @param {ConstructorParameters<typeof Datasource>} args
+ * @returns {Datasource}
+ */
 export function datasource(...args) {
 	return new Datasource(...args);
 }
 
+/**
+ * @param {ConstructorParameters<typeof Parameter>} args
+ * @returns {Parameter}
+ */
 export function parameter(...args) {
 	return new Parameter(...args);
 }
 
+/**
+ * @param {ConstructorParameters<typeof Transform>} args
+ * @returns {Transform}
+ */
 export function transform(...args) {
 	return new Transform(...args);
 }
 
+/**
+ * @param {ConstructorParameters<typeof Notebook>} args
+ * @returns {Notebook}
+ */
 export function notebook(...args) {
 	return new Notebook(...args);
 }

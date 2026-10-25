@@ -24,6 +24,17 @@ function getBaseUrl() {
 	return getApiEndpoint().match(/^(https?:\/\/.*?)(\/|$)/)[1];
 }
 
+/**
+ * Authenticates with Redivis. In Node, this logs in through the browser (with the device flow) and caches the
+ * credentials on disk; in the browser, it opens a sign-in popup. Requests also authenticate automatically when a
+ * resource requires it, so calling this is optional.
+ *
+ * @param {object} [options]
+ * @param {string} [options.apiToken] An API token to use instead of logging in. It's held in memory only.
+ * @param {string | string[]} [options.scope] The OAuth scope(s) to request
+ * @param {boolean} [options.forceReauthorization=false] Log in again, even if there are cached credentials
+ * @returns {Promise<void>}
+ */
 export async function authorize({ apiToken: apiTokenArg, scope, forceReauthorization = false } = {}) {
 	if (apiTokenArg) {
 		// Held in memory only; an explicitly provided token is never written to the credentials cache
@@ -39,15 +50,32 @@ export async function authorize({ apiToken: apiTokenArg, scope, forceReauthoriza
 	await getAuthToken({ scope });
 }
 
+/**
+ * Clears any credentials, including those cached on disk (in Node).
+ * @returns {Promise<void>}
+ */
 export async function deauthorize() {
 	apiToken = null;
 	await withAuthLock(clearCachedCredentials);
 }
 
+/**
+ * Whether credentials are available, without logging in.
+ * @returns {Promise<boolean>}
+ */
 export async function isAuthorized() {
 	return hasCredentials();
 }
 
+/**
+ * Sends all API requests through a proxy (e.g., your own server, which adds credentials), rather than to Redivis
+ * directly. Requests through a proxy never prompt a login.
+ *
+ * @param {string | {baseUrl: string, headers?: Record<string, string>}} baseUrlArg The proxy's base URL, which replaces
+ *   `https://redivis.com/api/v1`; or an object with the base URL and headers to send with every request
+ * @param {{headers?: Record<string, string>}} [options]
+ * @returns {void}
+ */
 export function setApiProxy(baseUrlArg, options = {}) {
 	if (baseUrlArg && typeof baseUrlArg !== 'object') {
 		options.baseUrl = baseUrlArg;
@@ -88,6 +116,10 @@ async function hasCredentials() {
 	return !!(await loadCachedCredentials());
 }
 
+/**
+ * @param {{scope?: string[]}} [options]
+ * @returns {Promise<string>}
+ */
 export async function getAuthToken({ scope } = {}) {
 	if (apiToken) {
 		return apiToken;
@@ -127,6 +159,10 @@ export async function getAuthToken({ scope } = {}) {
 }
 
 // Called after a request was rejected for its credentials (or lack thereof)
+/**
+ * @param {{scope?: string[], amrValues?: string, rejectedToken?: string}} [options]
+ * @returns {Promise<void>}
+ */
 export async function refreshCredentials({ scope, amrValues, rejectedToken } = {}) {
 	await withAuthLock(async () => {
 		const credentials = await loadCachedCredentials();

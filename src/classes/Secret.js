@@ -2,18 +2,23 @@ import Base from './Base.js';
 import { makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 
+/** @typedef {import('./User.js').default} User */
+/** @typedef {import('./Organization.js').default} Organization */
+
 export default class Secret extends Base {
 	/**
-	 * @param {string} name
-	 * @param {object} options One of user or organization is required
-	 * @param {import('./User.js').default} [options.user]
-	 * @param {import('./Organization.js').default} [options.organization]
+	 * A secret, belonging to a user or organization.
+	 *
+	 * @param {[name: string, options: {user?: User, organization?: Organization}] | [options: {name: string, user?: User, organization?: Organization}]} args
 	 */
 	constructor(...args) {
 		super();
 		const { name, user, organization } = parseArgs(args, ['name'], { allowed: ['user', 'organization'] });
+		/** @type {string} */
 		this.name = name;
+		/** @type {User | undefined} */
 		this.user = user;
+		/** @type {Organization | undefined} */
 		this.organization = organization;
 		this.uri = `${(user || organization).uri}/secrets/${encodeURIComponent(name)}`;
 	}

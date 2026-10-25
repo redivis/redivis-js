@@ -5,19 +5,25 @@ import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { JobError } from '../common/errors.js';
 
+/** @typedef {import('../common/args.js').ListArgs} ListArgs */
+/** @typedef {import('../common/args.js').NameArgs} NameArgs */
+
+/**
+ * @typedef {object} QueryOptions
+ * @property {string | import('./Workflow.js').default} [defaultWorkflow] Workflow (or its qualified reference) that
+ *   unqualified table references resolve within. Defaults to the configured `defaultWorkflow`.
+ * @property {string | import('./Dataset.js').default} [defaultDataset] Dataset (or its qualified reference) that
+ *   unqualified table references resolve within. Defaults to the configured `defaultDataset`.
+ */
+
 export default class Query extends TabularReader {
 	#initiation = null;
 	#payload = null;
 
 	/**
-	 * Queries are lazy: the query isn't started until it's first used.
+	 * A SQL query. Queries are lazy: the query isn't run until it's first used (e.g., by reading its results).
 	 *
-	 * @param {string} query The SQL query
-	 * @param {object} [options]
-	 * @param {string|object} [options.defaultWorkflow] Workflow (or its qualified reference) that unqualified table
-	 *   references resolve within. Defaults to the configured defaultWorkflow.
-	 * @param {string|object} [options.defaultDataset] Dataset (or its qualified reference) that unqualified table
-	 *   references resolve within. Defaults to the configured defaultDataset.
+	 * @param {[query: string, options?: QueryOptions] | [options: QueryOptions & {query: string}]} args
 	 */
 	constructor(...args) {
 		super();
@@ -42,18 +48,34 @@ export default class Query extends TabularReader {
 		return `<Query ${this.properties.id || '[uninitiated]'}>`;
 	}
 
+	/**
+	 * Runs the query, if it hasn't been run yet, and fetches its properties (including its status).
+	 * @returns {Promise<this>}
+	 */
 	async get() {
 		await this.#initiate();
 		this._updateProperties(await makeRequest({ method: 'GET', path: this.uri }));
 		return this;
 	}
 
+	/**
+	 * Returns one of the query's output variables, once the query finishes.
+	 *
+	 * @param {NameArgs} args
+	 * @returns {Promise<Variable>}
+	 */
 	async variable(...args) {
 		const { name } = parseArgs(args, ['name']);
 		await this._waitForFinish();
 		return new Variable(name, { query: this });
 	}
 
+	/**
+	 * Lists the query's output variables, once the query finishes.
+	 *
+	 * @param {ListArgs} args
+	 * @returns {Promise<Variable[]>}
+	 */
 	async listVariables(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		await this._waitForFinish();
@@ -61,16 +83,19 @@ export default class Query extends TabularReader {
 		return variables.map((variable) => new Variable(variable.name, { query: this, properties: variable }));
 	}
 
+	/** @protected @returns {Promise<{query: Query}>} */
 	async _getFileSource() {
 		await this._waitForFinish();
 		return { query: this };
 	}
 
+	/** @protected */
 	_getExportName() {
 		const finishedAt = this.properties.finishedAt ? new Date(this.properties.finishedAt) : new Date();
 		return `query_${finishedAt.toISOString().replace(/[.:]/g, '_')}`;
 	}
 
+	/** @protected */
 	async _getReadInfo() {
 		await this._waitForFinish();
 		return {
@@ -90,11 +115,13 @@ export default class Query extends TabularReader {
 		return this.#initiation;
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		this.properties = properties;
 		this.uri = properties.uri ?? `/queries/${properties.id}`;
 	}
 
+	/** @protected */
 	async _waitForFinish() {
 		await this.#initiate();
 		while (true) {

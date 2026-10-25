@@ -4,19 +4,23 @@ import { makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { definedValues } from '../common/references.js';
 
+/** @typedef {import('./Workflow.js').default} Workflow */
+
 export default class Parameter extends Base {
 	/**
-	 * @param {string} name The parameter's name. If no workflow is given, this may be fully qualified
-	 *   (`owner.workflow.parameter`), or else the parameter is in the configured defaultWorkflow.
-	 * @param {object} [options]
-	 * @param {import('./Workflow.js').default|string} [options.workflow]
-	 * @param {object} [options.properties]
+	 * A parameter of a workflow.
+	 *
+	 * @param {[name: string, options?: {workflow?: Workflow | string, properties?: Record<string, any>}] | [options: {name: string, workflow?: Workflow | string, properties?: Record<string, any>}]} args
+	 *   The parameter's name. If no workflow is given, this may be fully qualified (`owner.workflow.parameter`), or else the
+	 *   parameter is in the configured `defaultWorkflow`.
 	 */
 	constructor(...args) {
 		super();
 		const options = parseArgs(args, ['name'], { allowed: ['workflow', 'properties'] });
 		const { name, workflow } = resolveWorkflowChild('parameter', options.name, options.workflow);
+		/** @type {string} */
 		this.name = name;
+		/** @type {Workflow} */
 		this.workflow = workflow;
 		this.properties = options.properties;
 		this.uri = options.properties?.uri ?? `${workflow.uri}/parameters/${encodeURIComponent(name)}`;
@@ -27,9 +31,8 @@ export default class Parameter extends Base {
 	}
 
 	/**
-	 * @param {object} options
-	 * @param {any[]} options.values
-	 * @param {string} [options.type] The values' type (e.g. `string`, `integer`). Inferred if not given.
+	 * @param {[options: {values: any[], type?: string}]} args The type of the values (e.g. `string`, `integer`) is
+	 *   inferred if not given
 	 * @returns {Promise<this>}
 	 */
 	async create(...args) {
@@ -45,10 +48,7 @@ export default class Parameter extends Base {
 	}
 
 	/**
-	 * @param {object} options
-	 * @param {string} [options.name]
-	 * @param {string} [options.type]
-	 * @param {any[]} [options.values]
+	 * @param {[options: {name?: string, type?: string, values?: any[]}]} args
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {
@@ -57,6 +57,9 @@ export default class Parameter extends Base {
 		return this;
 	}
 
+	/**
+	 * @returns {Promise<void>}
+	 */
 	async delete() {
 		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
@@ -69,6 +72,7 @@ export default class Parameter extends Base {
 		return this.properties.values;
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		super._updateProperties(properties);
 		this.name = properties.name ?? this.name;

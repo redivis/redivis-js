@@ -13,14 +13,24 @@ import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
 import { splitReference } from '../common/references.js';
 
+/** @typedef {import('../common/args.js').ListArgs} ListArgs */
+/** @typedef {import('./Dataset.js').default} Dataset */
+/** @typedef {import('../common/args.js').NameArgs} NameArgs */
+
+/**
+ * @typedef {object} WorkflowOptions
+ * @property {User | string} [user]
+ * @property {Organization | string} [organization]
+ * @property {Record<string, any>} [properties]
+ */
+
 export default class Workflow extends Base {
 	/**
-	 * @param {string} name The workflow's name. If no owner is given, this may be fully qualified (`owner.name`), or
-	 *   else the owner is the configured defaultUser or defaultOrganization.
-	 * @param {object} [options]
-	 * @param {User|string} [options.user]
-	 * @param {Organization|string} [options.organization]
-	 * @param {object} [options.properties]
+	 * A workflow.
+	 *
+	 * @param {[name: string, options?: WorkflowOptions] | [options: WorkflowOptions & {name: string}]} args The workflow's
+	 *   name. If no owner is given, this may be fully qualified (`owner.name`), or else the owner is the configured
+	 *   `defaultUser` or `defaultOrganization`.
 	 */
 	constructor(...args) {
 		super();
@@ -46,47 +56,73 @@ export default class Workflow extends Base {
 			}
 		}
 
+		/** @type {User | undefined} */
 		this.user = user;
+		/** @type {Organization | undefined} */
 		this.organization = organization;
+		/** @type {string} */
 		this.name = name;
+		/** @type {string} */
 		this.scopedReference = properties?.scopedReference ?? this.name;
+		/** @type {string} */
 		this.qualifiedReference =
 			properties?.qualifiedReference ?? `${(this.organization || this.user).name}.${this.scopedReference}`;
 		this.uri = properties?.uri ?? `/workflows/${encodeURIComponent(this.qualifiedReference)}`;
 		this.properties = properties;
 	}
 
+	/**
+	 * Returns a query, in which unqualified table references resolve within this workflow.
+	 *
+	 * @param {[query: string] | [options: {query: string}]} args
+	 * @returns {Query}
+	 */
 	query(...args) {
 		const { query } = parseArgs(args, ['query']);
 		return new Query(query, { defaultWorkflow: this.qualifiedReference });
 	}
 
+	/**
+	 * @param {NameArgs} args
+	 * @returns {Table}
+	 */
 	table(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Table(name, { workflow: this });
 	}
 
+	/**
+	 * @param {NameArgs} args
+	 * @returns {Notebook}
+	 */
 	notebook(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Notebook(name, { workflow: this });
 	}
 
 	/**
-	 * @param {string} [name] Optional when creating a transform, in which case a name is generated
+	 * @param {[name?: string] | [options?: {name?: string}]} args Optional when creating a transform, in which case a
+	 *   name is generated
+	 * @returns {Transform}
 	 */
 	transform(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Transform(name, { workflow: this });
 	}
 
+	/**
+	 * @param {NameArgs} args
+	 * @returns {Parameter}
+	 */
 	parameter(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Parameter(name, { workflow: this });
 	}
 
 	/**
-	 * @param {string|import('./Dataset.js').default|Workflow} source The dataset or workflow that's the source of the
-	 *   datasource, or its qualified reference
+	 * @param {[source: string | Dataset | Workflow] | [options: {source: string | Dataset | Workflow}]} args The dataset or
+	 *   workflow that's the datasource's source, or its qualified reference
+	 * @returns {Datasource}
 	 */
 	datasource(...args) {
 		const { source } = parseArgs(args, ['source']);
@@ -95,7 +131,8 @@ export default class Workflow extends Base {
 
 	/**
 	 * Updates the metadata of many variables across the workflow's tables at once.
-	 * @param {object[]} variables
+	 *
+	 * @param {[variables: Record<string, any>[]] | [options: {variables: Record<string, any>[]}]} args
 	 * @returns {Promise<void>}
 	 */
 	async updateVariables(...args) {
@@ -104,9 +141,8 @@ export default class Workflow extends Base {
 	}
 
 	/**
-	 * @param {number} [maxResults]
-	 * @param {object} [options]
-	 * @param {boolean} [options.includeDatasources=false] Also list the tables of the workflow's datasources
+	 * @param {[maxResults?: number | null, options?: {includeDatasources?: boolean}] | [options?: {maxResults?: number | null, includeDatasources?: boolean}]} args
+	 *   `includeDatasources` also lists the tables of the workflow's datasources
 	 * @returns {Promise<Table[]>}
 	 */
 	async listTables(...args) {
@@ -122,6 +158,10 @@ export default class Workflow extends Base {
 		return tables.map((table) => new Table(table.name, { workflow: this, properties: table }));
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Datasource[]>}
+	 */
 	async listDatasources(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const datasources = await makePaginatedRequest({ path: `${this.uri}/dataSources`, pageSize: 100, maxResults });
@@ -130,24 +170,37 @@ export default class Workflow extends Base {
 		);
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Notebook[]>}
+	 */
 	async listNotebooks(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const notebooks = await makePaginatedRequest({ path: `${this.uri}/notebooks`, pageSize: 100, maxResults });
 		return notebooks.map((notebook) => new Notebook(notebook.name, { workflow: this, properties: notebook }));
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Transform[]>}
+	 */
 	async listTransforms(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const transforms = await makePaginatedRequest({ path: `${this.uri}/transforms`, pageSize: 100, maxResults });
 		return transforms.map((transform) => new Transform(transform.name, { workflow: this, properties: transform }));
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Parameter[]>}
+	 */
 	async listParameters(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const parameters = await makePaginatedRequest({ path: `${this.uri}/parameters`, pageSize: 100, maxResults });
 		return parameters.map((parameter) => new Parameter(parameter.name, { workflow: this, properties: parameter }));
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		super._updateProperties(properties);
 		this.name = properties.name;

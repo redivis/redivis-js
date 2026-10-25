@@ -4,22 +4,25 @@ import { makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { definedValues } from '../common/references.js';
 
+/** @typedef {import('./Organization.js').default} Organization */
+
 export default class Member extends Base {
 	/**
 	 * A member of an organization.
 	 *
-	 * @param {string} name The member's username
-	 * @param {object} options
-	 * @param {import('./Organization.js').default} options.organization
-	 * @param {object} [options.properties]
+	 * @param {[name: string, options: {organization: Organization, properties?: Record<string, any>}] | [options: {name: string, organization: Organization, properties?: Record<string, any>}]} args
+	 *   The member's username
 	 */
 	constructor(...args) {
 		super();
 		const { name, organization, properties } = parseArgs(args, ['name'], {
 			allowed: ['organization', 'properties'],
 		});
+		/** @type {string} */
 		this.name = name;
+		/** @type {Organization} */
 		this.organization = organization;
+		/** @type {User} */
 		this.user = new User(name, { properties: properties?.user });
 		this.uri = properties?.uri ?? `${organization.uri}/members/${encodeURIComponent(name)}`;
 		this.properties = properties;
@@ -30,11 +33,8 @@ export default class Member extends Base {
 	}
 
 	/**
-	 * @param {object} options
-	 * @param {string} [options.status]
-	 * @param {string[]} [options.labels] Replaces the member's labels
-	 * @param {string[]} [options.labelsToAdd]
-	 * @param {string[]} [options.labelsToRemove]
+	 * @param {[options: {status?: string, labels?: string[], labelsToAdd?: string[], labelsToRemove?: string[]}]} args
+	 *   `labels` replaces the member's labels
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {
@@ -44,7 +44,7 @@ export default class Member extends Base {
 	}
 
 	/**
-	 * @param {string} text
+	 * @param {[text: string] | [options: {text: string}]} args
 	 * @returns {Promise<this>}
 	 */
 	async addComment(...args) {
@@ -53,6 +53,7 @@ export default class Member extends Base {
 		return this;
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		super._updateProperties(properties);
 		if (properties.user) {

@@ -8,6 +8,7 @@ export class RedivisError extends Error {
 // An error response from the Redivis API. `code` is the machine-readable error (e.g. "not_found"), and
 //   `description` the human-readable explanation.
 export class APIError extends RedivisError {
+	/** @param {{status?: number, code?: string, description?: string}} [options] */
 	constructor({ status, code = 'api_error', description } = {}) {
 		super(description ? `[${status} ${code}] ${description}` : `[${status} ${code}]`);
 		this.status = status;
@@ -17,6 +18,7 @@ export class APIError extends RedivisError {
 }
 
 export class NotFoundError extends APIError {
+	/** @param {{status?: number, code?: string, description?: string}} [options] */
 	constructor({ status = 404, code = 'not_found', description } = {}) {
 		super({ status, code, description });
 		this.message = description || code;
@@ -24,6 +26,7 @@ export class NotFoundError extends APIError {
 }
 
 export class AuthorizationError extends APIError {
+	/** @param {{status?: number, code?: string, description?: string}} [options] */
 	constructor({ status = 403, code = 'forbidden', description } = {}) {
 		super({ status, code, description });
 	}
@@ -31,6 +34,10 @@ export class AuthorizationError extends APIError {
 
 // A request couldn't complete, even after retrying. The underlying error is available as `cause`.
 export class NetworkError extends RedivisError {
+	/**
+	 * @param {string} [message]
+	 * @param {{cause?: any}} [options]
+	 */
 	constructor(message = 'A network error occurred', { cause } = {}) {
 		super(cause?.message ? `${message}: ${cause.message}` : message, { cause });
 	}
@@ -38,6 +45,7 @@ export class NetworkError extends RedivisError {
 
 // A job (query, upload, export, transform, etc.) finished without succeeding
 export class JobError extends RedivisError {
+	/** @param {{message?: string, kind?: string, status?: string}} [options] */
 	constructor({ message, kind, status = 'status unknown' } = {}) {
 		message = message || `Job finished with status: ${status}`;
 		super(kind ? `[${kind} ${status}] ${message}` : message);

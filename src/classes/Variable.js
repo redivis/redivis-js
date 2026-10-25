@@ -3,23 +3,32 @@ import { makeRequest, sleep } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { definedValues } from '../common/references.js';
 
+/**
+ * @typedef {object} VariableOptions One of table, query, or upload is required
+ * @property {import('./Table.js').default} [table]
+ * @property {import('./Query.js').default} [query]
+ * @property {import('./Upload.js').default} [upload]
+ * @property {Record<string, any>} [properties]
+ */
+
 export default class Variable extends Base {
 	/**
-	 * @param {string} name
-	 * @param {object} options One of table, query, or upload is required
-	 * @param {import('./Table.js').default} [options.table]
-	 * @param {import('./Query.js').default} [options.query]
-	 * @param {object} [options.upload]
-	 * @param {object} [options.properties]
+	 * A variable of a table, query, or upload.
+	 *
+	 * @param {[name: string, options: VariableOptions] | [options: VariableOptions & {name: string}]} args
 	 */
 	constructor(...args) {
 		super();
 		const { name, table, query, upload, properties } = parseArgs(args, ['name'], {
 			allowed: ['table', 'query', 'upload', 'properties'],
 		});
+		/** @type {string} */
 		this.name = name;
+		/** @type {import('./Table.js').default | undefined} */
 		this.table = table;
+		/** @type {import('./Query.js').default | undefined} */
 		this.query = query;
+		/** @type {import('./Upload.js').default | undefined} */
 		this.upload = upload;
 		this.properties = properties;
 		this.uri = properties?.uri ?? `${(table || query || upload).uri}/variables/${encodeURIComponent(name)}`;
@@ -30,10 +39,8 @@ export default class Variable extends Base {
 	}
 
 	/**
-	 * @param {object} options
-	 * @param {string} [options.label]
-	 * @param {string} [options.description]
-	 * @param {object} [options.valueLabels] A map of values to their labels
+	 * @param {[options: {label?: string, description?: string, valueLabels?: Record<string, string>}]} args
+	 *   `valueLabels` maps values to their labels
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {
@@ -51,9 +58,9 @@ export default class Variable extends Base {
 
 	/**
 	 * Returns the variable's summary statistics, waiting for them to be computed if needed.
-	 * @param {object} [options]
-	 * @param {AbortSignal} [options.signal]
-	 * @returns {Promise<object>}
+	 *
+	 * @param {[options?: {signal?: AbortSignal}]} args
+	 * @returns {Promise<Record<string, any>>}
 	 */
 	async getStatistics(...args) {
 		const { signal } = parseArgs(args, [], { allowed: ['signal'] });

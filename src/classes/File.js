@@ -5,17 +5,27 @@ import { downloadFile, resolveDownloadPath } from '../common/download.js';
 
 const MAX_RETRIES = 10;
 
+/**
+ * @typedef {object} FileOptions One of table or query is required
+ * @property {import('./Directory.js').default} [directory]
+ * @property {import('./Table.js').default} [table]
+ * @property {import('./Query.js').default} [query]
+ * @property {Record<string, any>} [properties]
+ */
+
+/**
+ * @typedef {object} FileDownloadOptions
+ * @property {boolean} [overwrite=false] Replace an existing file with different contents
+ * @property {(progress: {bytesDownloaded: number, totalBytes?: number}) => void} [onProgress]
+ * @property {AbortSignal} [signal]
+ */
+
 export default class File {
 	/**
 	 * A file in a file index table (or query result), as listed by `toDirectory()` or `listFiles()`.
 	 *
-	 * @param {string} id
-	 * @param {string} name The file's path within its table, e.g. `images/a.png`
-	 * @param {object} options
-	 * @param {import('./Directory.js').default} [options.directory]
-	 * @param {import('./Table.js').default} [options.table]
-	 * @param {import('./Query.js').default} [options.query]
-	 * @param {object} [options.properties]
+	 * @param {[id: string, name: string, options: FileOptions] | [options: FileOptions & {id: string, name: string}]} args
+	 *   The file's id, and its path within its table (e.g. `images/a.png`)
 	 */
 	constructor(...args) {
 		const {
@@ -31,13 +41,21 @@ export default class File {
 		if (!table && !query) {
 			throw new ValueError('A file must belong to a table or query');
 		}
+		/** @type {string} */
 		this.id = id;
+		/** @type {string} */
 		this.path = name;
+		/** @type {string} */
 		this.name = name.split('/').pop();
+		/** @type {import('./Directory.js').default | undefined} */
 		this.directory = directory;
+		/** @type {import('./Table.js').default | undefined} */
 		this.table = table;
+		/** @type {import('./Query.js').default | undefined} */
 		this.query = query;
+		/** @type {Record<string, any>} */
 		this.properties = properties;
+		/** @type {string} */
 		this.uri = `/rawFiles/${encodeURIComponent(id)}`;
 	}
 
@@ -71,12 +89,10 @@ export default class File {
 	/**
 	 * Reads the file's contents (or a range of them) into memory.
 	 *
-	 * @param {object} [options]
-	 * @param {boolean} [options.asText=false] Decode the contents as UTF-8 text
-	 * @param {number} [options.startByte=0]
-	 * @param {number} [options.endByte] The last byte to read (inclusive). Defaults to the end of the file.
-	 * @param {AbortSignal} [options.signal]
-	 * @returns {Promise<Uint8Array|string>}
+	 * @param {[options?: {asText?: boolean, startByte?: number, endByte?: number, signal?: AbortSignal}]} args `asText`
+	 *   decodes the contents as UTF-8 text. `endByte` is the last byte to read (inclusive), and defaults to the end of the
+	 *   file.
+	 * @returns {Promise<Uint8Array | string>}
 	 */
 	async read(...args) {
 		const { asText, startByte, endByte, signal } = parseArgs(args, [], {
@@ -88,13 +104,11 @@ export default class File {
 	}
 
 	/**
-	 * Streams the file's contents (or a range of them). Nothing is requested until the stream is read, and an
-	 * interrupted download resumes where it left off.
+	 * Streams the file's contents (or a range of them). Nothing is requested until the stream is read, and an interrupted
+	 * download resumes where it left off.
 	 *
-	 * @param {object} [options]
-	 * @param {number} [options.startByte=0]
-	 * @param {number} [options.endByte] The last byte to read (inclusive). Defaults to the end of the file.
-	 * @param {AbortSignal} [options.signal]
+	 * @param {[options?: {startByte?: number, endByte?: number, signal?: AbortSignal}]} args `endByte` is the last byte to
+	 *   read (inclusive), and defaults to the end of the file.
 	 * @returns {ReadableStream<Uint8Array>}
 	 */
 	stream(...args) {
@@ -174,14 +188,11 @@ export default class File {
 	}
 
 	/**
-	 * Downloads the file (in Node). An existing file with the same contents is left as is.
+	 * Downloads the file (in Node only). An existing file with the same contents is left as is.
 	 *
-	 * @param {string} [path] A file path, or a directory to download into (if it exists, or ends with a separator).
-	 *   Defaults to the current working directory.
-	 * @param {object} [options]
-	 * @param {boolean} [options.overwrite=false] Replace an existing file with different contents
-	 * @param {(progress: {bytesDownloaded: number, totalBytes?: number}) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 * @param {[path?: string, options?: FileDownloadOptions] | [options?: FileDownloadOptions & {path?: string}]} args A file
+	 *   path, or a directory to download into (if it exists, or ends with a separator). Defaults to the current working
+	 *   directory.
 	 * @returns {Promise<string>} The path of the downloaded file
 	 */
 	async download(...args) {

@@ -10,16 +10,39 @@ import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
 import { definedValues, splitReference } from '../common/references.js';
 
+/** @typedef {import('../common/args.js').ListArgs} ListArgs */
+/** @typedef {import('../common/args.js').NameArgs} NameArgs */
+
+/**
+ * @typedef {object} DatasetOptions
+ * @property {string} [version] The version tag, e.g. `v1_0`, `current`, or `next`
+ * @property {User | string} [user]
+ * @property {Organization | string} [organization]
+ * @property {Record<string, any>} [properties]
+ */
+
+/**
+ * @typedef {object} DatasetUpdateOptions
+ * @property {string} [name]
+ * @property {'none' | 'overview' | 'metadata' | 'sample' | 'data'} [publicAccessLevel]
+ * @property {string} [description]
+ * @property {string} [methodologyMarkdown]
+ * @property {string} [usageMarkdown]
+ * @property {string[]} [labels] Replaces the dataset's labels
+ * @property {string[]} [labelsToAdd]
+ * @property {string[]} [labelsToRemove]
+ * @property {string[]} [tags] Replaces the dataset's tags
+ * @property {string[]} [tagsToAdd]
+ * @property {string[]} [tagsToRemove]
+ */
+
 export default class Dataset extends Base {
 	/**
-	 * @param {string} name The dataset's name, optionally with a reference id and version (`name:abc1:v1_0`). If no
-	 *   owner is given, this may be fully qualified (`owner.name`), or else the owner is the configured defaultUser or
-	 *   defaultOrganization.
-	 * @param {object} [options]
-	 * @param {string} [options.version] The version tag, e.g. `v1_0`, `current`, or `next`
-	 * @param {User} [options.user]
-	 * @param {Organization} [options.organization]
-	 * @param {object} [options.properties]
+	 * A dataset.
+	 *
+	 * @param {[name: string, options?: DatasetOptions] | [options: DatasetOptions & {name: string}]} args The dataset's
+	 *   name, optionally with a reference id and version (`name:abc1:v1_0`). If no owner is given, this may be fully
+	 *   qualified (`owner.name`), or else the owner is the configured `defaultUser` or `defaultOrganization`.
 	 */
 	constructor(...args) {
 		super();
@@ -46,35 +69,57 @@ export default class Dataset extends Base {
 			}
 		}
 
+		/** @type {string} */
 		this.name = name.split(':')[0];
+		/** @type {User | undefined} */
 		this.user = user;
+		/** @type {Organization | undefined} */
 		this.organization = organization;
 
 		const referenceId = name.replace(/:(v\d+[._]\d+|current|next|sample)/gi, '').split(':')[1];
 		if (!version) {
 			version = name.match(/:(v\d+[._]\d+|current|next)/i)?.[1];
 		}
+		/** @type {string | undefined} */
 		this.versionTag = normalizeVersionTag(version);
 
+		/** @type {string} */
 		this.scopedReference =
 			properties?.scopedReference ??
 			`${this.name}${referenceId ? `:${referenceId}` : ''}${this.versionTag ? `:${this.versionTag}` : ''}`;
+		/** @type {string} */
 		this.qualifiedReference =
 			properties?.qualifiedReference ?? `${(this.organization || this.user).name}.${this.scopedReference}`;
 		this.uri = properties?.uri ?? `/datasets/${encodeURIComponent(this.qualifiedReference)}`;
 		this.properties = properties;
 	}
 
+	/**
+	 * @param {NameArgs} args
+	 * @returns {Table}
+	 */
 	table(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Table(name, { dataset: this });
 	}
 
+	/**
+	 * Returns a query, in which unqualified table references resolve within this dataset.
+	 *
+	 * @param {[query: string] | [options: {query: string}]} args
+	 * @returns {Query}
+	 */
 	query(...args) {
 		const { query } = parseArgs(args, ['query']);
 		return new Query(query, { defaultDataset: this.qualifiedReference });
 	}
 
+	/**
+	 * Creates the dataset.
+	 *
+	 * @param {[options?: {publicAccessLevel?: 'none' | 'overview' | 'metadata' | 'sample' | 'data', description?: string}]} args
+	 * @returns {Promise<this>}
+	 */
 	async create(...args) {
 		const { publicAccessLevel, description } = parseArgs(args, [], {
 			defaults: { publicAccessLevel: 'none' },
@@ -96,18 +141,7 @@ export default class Dataset extends Base {
 	/**
 	 * Updates the dataset's metadata. Only the options that are passed are changed.
 	 *
-	 * @param {object} options
-	 * @param {string} [options.name]
-	 * @param {'none'|'overview'|'metadata'|'sample'|'data'} [options.publicAccessLevel]
-	 * @param {string} [options.description]
-	 * @param {string} [options.methodologyMarkdown]
-	 * @param {string} [options.usageMarkdown]
-	 * @param {string[]} [options.labels] Replaces the dataset's labels
-	 * @param {string[]} [options.labelsToAdd]
-	 * @param {string[]} [options.labelsToRemove]
-	 * @param {string[]} [options.tags] Replaces the dataset's tags
-	 * @param {string[]} [options.tagsToAdd]
-	 * @param {string[]} [options.tagsToRemove]
+	 * @param {[options: DatasetUpdateOptions]} args
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {
@@ -132,7 +166,8 @@ export default class Dataset extends Base {
 
 	/**
 	 * Updates the metadata of many variables across the dataset's tables at once.
-	 * @param {object[]} variables
+	 *
+	 * @param {[variables: Record<string, any>[]] | [options: {variables: Record<string, any>[]}]} args
 	 * @returns {Promise<void>}
 	 */
 	async updateVariables(...args) {
@@ -140,6 +175,10 @@ export default class Dataset extends Base {
 		await makeRequest({ method: 'PATCH', path: `${this.uri}/variables`, payload: { variables } });
 	}
 
+	/**
+	 * Deletes the dataset.
+	 * @returns {Promise<void>}
+	 */
 	async delete() {
 		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
@@ -147,9 +186,8 @@ export default class Dataset extends Base {
 	/**
 	 * Creates the next (unreleased) version of the dataset, where changes can be made before it's released.
 	 *
-	 * @param {object} [options]
-	 * @param {boolean} [options.ifNotExists=false] Return the existing next version, rather than throwing, if there
-	 *   already is one
+	 * @param {[options?: {ifNotExists?: boolean}]} args With `ifNotExists`, return the existing next version, rather than
+	 *   throwing, if there already is one
 	 * @returns {Promise<Dataset>} The dataset at its next version
 	 */
 	async createNextVersion(...args) {
@@ -174,8 +212,8 @@ export default class Dataset extends Base {
 
 	/**
 	 * Releases the next version of the dataset.
-	 * @param {object} [options]
-	 * @param {string} [options.releaseNotes]
+	 *
+	 * @param {[options?: {releaseNotes?: string}]} args
 	 * @returns {Promise<this>} This dataset, at the newly released version
 	 */
 	async release(...args) {
@@ -201,7 +239,8 @@ export default class Dataset extends Base {
 
 	/**
 	 * Returns a version of the dataset: the given tag, or else the version this dataset refers to.
-	 * @param {string} [tag]
+	 *
+	 * @param {[tag?: string] | [options?: {tag?: string}]} args
 	 * @returns {Promise<Version>}
 	 */
 	async version(...args) {
@@ -230,18 +269,27 @@ export default class Dataset extends Base {
 		return version && version.dataset();
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Version[]>}
+	 */
 	async listVersions(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const versions = await makePaginatedRequest({ path: `${this.uri}/versions`, pageSize: 100, maxResults });
 		return versions.map((version) => new Version(version.tag, { dataset: this, properties: version }));
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Table[]>}
+	 */
 	async listTables(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const tables = await makePaginatedRequest({ path: `${this.uri}/tables`, pageSize: 100, maxResults });
 		return tables.map((table) => new Table(table.name, { dataset: this, properties: table }));
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		super._updateProperties(properties);
 		this.name = properties.name;
@@ -259,6 +307,7 @@ export default class Dataset extends Base {
 
 	// When the owner came from a qualified reference, we don't know whether it's a user or an organization until the
 	//   API tells us (or we ask)
+	/** @protected */
 	async _rectifyAmbiguousOwner() {
 		if (this.user && this.organization) {
 			if (await this.organization.exists()) {

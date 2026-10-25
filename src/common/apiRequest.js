@@ -26,6 +26,8 @@ const printedWarnings = new Set();
  *   otherwise). If false, the raw `Response` is returned.
  * @param {RequestCache} [options.cache] The fetch cache mode
  * @param {AbortSignal} [options.signal]
+ * @param {string[]} [options.authFailures] Internal: the authentication failures so far
+ * @param {number} [options.retryCount] Internal: the number of retries so far
  * @returns {Promise<any>}
  */
 export async function makeRequest({
@@ -152,7 +154,8 @@ export async function makeRequest({
 
 /**
  * Fetches every page of a paginated API listing, up to `maxResults` results.
- * @returns {Promise<object[]>}
+ * @param {{path: string, pageSize?: number, query?: Record<string, any>, maxResults?: number | null, signal?: AbortSignal}} options
+ * @returns {Promise<any[]>}
  */
 export async function makePaginatedRequest({ path, pageSize = 100, query = {}, maxResults, signal }) {
 	const results = [];

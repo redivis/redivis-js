@@ -9,10 +9,8 @@ export default class Export extends Base {
 	/**
 	 * An export of a table, query, or upload's data to files, as created by their `download()` method.
 	 *
-	 * @param {string} id
-	 * @param {object} options
-	 * @param {string} [options.fileName='export'] The name of the downloaded file (or directory, if there are several)
-	 * @param {object} [options.properties]
+	 * @param {[id: string, options?: {fileName?: string, properties?: Record<string, any>}] | [options: {id: string, fileName?: string, properties?: Record<string, any>}]} args
+	 *   `fileName` is the name of the downloaded file (or directory, if there are several)
 	 */
 	constructor(...args) {
 		super();
@@ -20,7 +18,9 @@ export default class Export extends Base {
 			defaults: { fileName: 'export' },
 			allowed: ['properties'],
 		});
+		/** @type {string} */
 		this.id = id;
+		/** @type {string} */
 		this.fileName = fileName;
 		this.properties = properties;
 		this.uri = properties?.uri ?? `/exports/${encodeURIComponent(id)}`;
@@ -32,9 +32,8 @@ export default class Export extends Base {
 
 	/**
 	 * Waits for the export to finish, throwing a JobError if it fails.
-	 * @param {object} [options]
-	 * @param {(progress: {percentCompleted: number}) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 *
+	 * @param {[options?: {onProgress?: (progress: {percentCompleted: number}) => void, signal?: AbortSignal}]} args
 	 * @returns {Promise<this>}
 	 */
 	async waitForFinish(...args) {
@@ -55,15 +54,11 @@ export default class Export extends Base {
 	}
 
 	/**
-	 * Waits for the export to finish, then downloads its files (in Node).
+	 * Waits for the export to finish, then downloads its files (in Node only).
 	 *
-	 * @param {string} [path] A file path, if the export is a single file; otherwise (or if it's an existing directory,
-	 *   or ends with a separator) the directory to download into. Defaults to the current working directory.
-	 * @param {object} [options]
-	 * @param {boolean} [options.overwrite=false]
-	 * @param {number} [options.maxConcurrency=16]
-	 * @param {(progress: object) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 * @param {[path?: string, options?: Omit<import('./TabularReader.js').DataDownloadOptions, 'format'>] | [options?: Omit<import('./TabularReader.js').DataDownloadOptions, 'format'> & {path?: string}]} args
+	 *   A file path, if the export is a single file; otherwise (or if it's an existing directory, or ends with a
+	 *   separator) the directory to download into. Defaults to the current working directory.
 	 * @returns {Promise<string[]>} The paths of the downloaded files
 	 */
 	async downloadFiles(...args) {

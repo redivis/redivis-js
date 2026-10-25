@@ -6,19 +6,54 @@ import { JobError, ValueError } from '../common/errors.js';
 import { definedValues } from '../common/references.js';
 import { createTempUploads, resolveContent, uploadToTempUpload } from '../common/upload.js';
 
+/** @typedef {import('../common/args.js').ListArgs} ListArgs */
+/** @typedef {import('../common/args.js').NameArgs} NameArgs */
+/** @typedef {import('./Table.js').default} Table */
+
+/**
+ * @typedef {Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array> | string | Record<string, any>[] | import('apache-arrow').Table} UploadContent
+ */
+
+/**
+ * @typedef {object} UploadOptions
+ * @property {string} [type] The file type (e.g. `delimited`, `parquet`, `ndjson`, `stream`). Inferred from the name
+ *   if not given.
+ * @property {number} [size] The size in bytes, required when the content is a ReadableStream
+ * @property {Record<string, any>} [transferSpecification] Import the data from another source (e.g., a URL or a cloud
+ *   bucket), rather than uploading content
+ * @property {Record<string, any>[]} [schema] The variables of a `stream` upload
+ * @property {Record<string, any>} [metadata] Variable metadata, keyed by variable name
+ * @property {string} [delimiter]
+ * @property {boolean} [hasHeaderRow=true]
+ * @property {boolean} [skipBadRecords=false]
+ * @property {boolean} [hasQuotedNewlines]
+ * @property {string} [quoteCharacter]
+ * @property {string} [escapeCharacter]
+ * @property {string[]} [nullMarkers]
+ * @property {boolean} [allowJaggedRows=false]
+ * @property {boolean} [ifNotExists=false] Do nothing if an upload with this name already exists
+ * @property {boolean} [replaceOnConflict=false] Replace an existing upload with this name
+ * @property {boolean} [renameOnConflict=false] Give the upload a new name if one with this name exists
+ * @property {boolean} [waitForFinish=true] Wait for the data to be imported
+ * @property {boolean} [raiseOnFail=true] Throw a JobError if the import fails
+ * @property {boolean} [removeOnFail=false] Delete the upload if the import fails
+ * @property {(progress: {bytesUploaded: number, totalBytes: number}) => void} [onProgress]
+ * @property {AbortSignal} [signal]
+ */
+
 export default class Upload extends TabularReader {
 	/**
 	 * An upload of data to a table, in the next version of its dataset.
 	 *
-	 * @param {string} [name] Defaults to the name of the uploaded file, if any
-	 * @param {object} options
-	 * @param {import('./Table.js').default} options.table
-	 * @param {object} [options.properties]
+	 * @param {[name?: string, options?: {table: Table, properties?: Record<string, any>}] | [options: {name?: string, table: Table, properties?: Record<string, any>}]} args
+	 *   The upload's name. Defaults to the name of the uploaded file, if any.
 	 */
 	constructor(...args) {
 		super();
 		const { name = '', table, properties } = parseArgs(args, ['name'], { allowed: ['table', 'properties'] });
+		/** @type {string} */
 		this.name = name;
+		/** @type {Table} */
 		this.table = table;
 		this.properties = properties;
 		this.uri = properties?.uri ?? uploadUri(table, name);
@@ -31,34 +66,14 @@ export default class Upload extends TabularReader {
 	/**
 	 * Uploads data to the table, and (by default) waits for it to be imported.
 	 *
-	 * @param {Blob|File|ArrayBuffer|ArrayBufferView|ReadableStream|string|object[]|import('apache-arrow').Table} [content]
+	 * @example
+	 * await table.upload('data.csv').create(file);
+	 * await table.upload('rows').create([{ id: 1, name: 'a' }]);
+	 *
+	 * @param {[content?: UploadContent, options?: UploadOptions] | [options?: UploadOptions & {content?: UploadContent}]} args
 	 *   The data to upload: a Blob or File; an ArrayBuffer or typed array; a ReadableStream (with the `size` option); a
 	 *   file path (in Node); or tabular data (an array of row objects, or an arrow Table), which is uploaded as
-	 *   newline-delimited JSON. Omit for a `transferSpecification` or a `type: 'stream'` upload.
-	 * @param {object} [options]
-	 * @param {string} [options.type] The file type (e.g. `delimited`, `parquet`, `stream`). Inferred from the name if
-	 *   not given.
-	 * @param {number} [options.size] The size in bytes, required when `content` is a ReadableStream
-	 * @param {object} [options.transferSpecification] Import the data from another source (e.g., a URL or a cloud
-	 *   bucket), rather than uploading content
-	 * @param {object[]} [options.schema] The variables of a `stream` upload
-	 * @param {object} [options.metadata] Variable metadata, keyed by variable name
-	 * @param {string} [options.delimiter]
-	 * @param {boolean} [options.hasHeaderRow=true]
-	 * @param {boolean} [options.skipBadRecords=false]
-	 * @param {boolean} [options.hasQuotedNewlines]
-	 * @param {string} [options.quoteCharacter]
-	 * @param {string} [options.escapeCharacter]
-	 * @param {string[]} [options.nullMarkers]
-	 * @param {boolean} [options.allowJaggedRows=false]
-	 * @param {boolean} [options.ifNotExists=false] Do nothing if an upload with this name already exists
-	 * @param {boolean} [options.replaceOnConflict=false] Replace an existing upload with this name
-	 * @param {boolean} [options.renameOnConflict=false] Give the upload a new name if one with this name exists
-	 * @param {boolean} [options.waitForFinish=true] Wait for the data to be imported
-	 * @param {boolean} [options.raiseOnFail=true] Throw a JobError if the import fails
-	 * @param {boolean} [options.removeOnFail=false] Delete the upload if the import fails
-	 * @param {(progress: {bytesUploaded: number, totalBytes: number}) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 *   newline-delimited JSON. Omit it for a `transferSpecification` or a `type: 'stream'` upload.
 	 * @returns {Promise<this>}
 	 */
 	async create(...args) {
@@ -184,14 +199,19 @@ export default class Upload extends TabularReader {
 		}
 	}
 
+	/**
+	 * Deletes the upload.
+	 * @returns {Promise<void>}
+	 */
 	async delete() {
 		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
 
 	/**
 	 * Inserts rows into a `stream` upload.
-	 * @param {object[]} rows
-	 * @returns {Promise<object>} The API's response
+	 *
+	 * @param {[rows: Record<string, any>[]] | [options: {rows: Record<string, any>[]}]} args
+	 * @returns {Promise<Record<string, any>>} The API's response
 	 */
 	async insertRows(...args) {
 		const { rows } = parseArgs(args, ['rows']);
@@ -201,17 +221,26 @@ export default class Upload extends TabularReader {
 		return makeRequest({ method: 'POST', path: `${this.uri}/rows`, payload: { rows } });
 	}
 
+	/**
+	 * @param {NameArgs} args
+	 * @returns {Variable}
+	 */
 	variable(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Variable(name, { upload: this });
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Variable[]>}
+	 */
 	async listVariables(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const variables = await makePaginatedRequest({ path: `${this.uri}/variables`, pageSize: 1000, maxResults });
 		return variables.map((variable) => new Variable(variable.name, { upload: this, properties: variable }));
 	}
 
+	/** @protected */
 	async _getReadInfo() {
 		await this.get();
 		if (this.properties.status !== 'completed') {
@@ -222,6 +251,7 @@ export default class Upload extends TabularReader {
 		return { numRows: this.properties.numRows, numBytes: this.properties.numBytes, canListRows: false };
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		super._updateProperties(properties);
 		this.name = properties.name ?? this.name;

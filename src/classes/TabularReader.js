@@ -18,23 +18,65 @@ import {
 } from '../common/readRows.js';
 import { toRowsArray } from '../common/rowsArray.js';
 
+/** @typedef {import('apache-arrow').RecordBatch} RecordBatch */
+/** @typedef {import('apache-arrow').Table} ArrowTable */
+/** @typedef {import('./Directory.js').default} Directory */
+/** @typedef {import('./File.js').default} File */
+
+/**
+ * @typedef {object} ReadOptions
+ * @property {string[]} [variables] The variables to read, in order (matched case-insensitively). Defaults to all.
+ * @property {number} [maxParallelization] The number of streams to read in parallel, for large reads (at most 8)
+ * @property {(batch: RecordBatch) => RecordBatch | null | Promise<RecordBatch | null>} [batchPreprocessor] Transforms
+ *   each batch as it's read; return null to drop the batch
+ * @property {(progress: {rowsRead: number, totalRows?: number}) => void} [onProgress]
+ * @property {AbortSignal} [signal]
+ */
+
+/**
+ * @typedef {ReadOptions & {maxBytes?: number | null}} ReadTableOptions `maxBytes` fails the read rather than read
+ *   more than this many bytes into memory. It defaults to 100MB in the browser, and no limit in Node; pass null for
+ *   no limit.
+ */
+
+/**
+ * @typedef {ReadTableOptions & {bigInt?: boolean, temporal?: boolean}} RowsArrayOptions `bigInt` returns integers as
+ *   BigInts, rather than Numbers (which lose precision beyond 2^53). `temporal: false` returns dates and dateTimes as
+ *   Dates (in UTC, with millisecond precision) and times as strings (`HH:MM:SS[.ffffff]`), rather than Temporal values.
+ */
+
+/**
+ * @typedef {object} FileListingOptions
+ * @property {string} [fileIdVariable] The variable containing file ids, if not `file_id`
+ * @property {string} [fileNameVariable] The variable containing file names, if not `file_name`
+ * @property {AbortSignal} [signal]
+ */
+
+/**
+ * @typedef {object} DataDownloadOptions
+ * @property {string} [format='csv'] e.g. `csv`, `parquet`, `avro`, `ndjson`, `stata`, `sas`, or `spss`
+ * @property {boolean} [overwrite=false] Replace existing files
+ * @property {number} [maxConcurrency=16] The number of files to download at once
+ * @property {(progress: {stage: 'exporting' | 'downloading'} & Record<string, number>) => void} [onProgress]
+ * @property {AbortSignal} [signal]
+ */
+
 const iteratorOptions = ['variables', 'batchPreprocessor', 'onProgress', 'signal'];
 
 // Shared row-reading methods of tables, queries, uploads, and read streams. Subclasses implement _getReadInfo().
 export default class TabularReader extends Base {
 	/**
-	 * Streams the rows as arrow RecordBatches, which can be consumed with `for await`. Nothing is read until iteration
-	 * starts, and breaking out of the loop stops the read. Batches from parallel streams arrive in no particular order.
+	 * Streams the rows as arrow RecordBatches, to consume with `for await`. Nothing is read until iteration starts, and
+	 * breaking out of the loop stops the read. Batches from parallel streams arrive in no particular order.
 	 *
-	 * @param {number} [maxResults] The maximum number of rows to read
-	 * @param {object} [options]
-	 * @param {string[]} [options.variables] The variables to read, in order. Defaults to all.
-	 * @param {number} [options.maxParallelization] The number of streams to read in parallel (at most 8)
-	 * @param {(batch: import('apache-arrow').RecordBatch) => import('apache-arrow').RecordBatch | null} [options.batchPreprocessor]
-	 *   Transforms each batch as it's read; return null to drop the batch
-	 * @param {(progress: {rowsRead: number, totalRows?: number}) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
-	 * @returns {AsyncGenerator<import('apache-arrow').RecordBatch>}
+	 * @example
+	 * for await (const batch of table.toArrowBatchIterator({ variables: ['name', 'year'] })) {
+	 *   console.log(batch.numRows);
+	 * }
+	 *
+	 * @param {[maxResults?: number | null, options?: ReadOptions] | [options?: ReadOptions & {maxResults?: number | null}]} args
+	 *   The maximum number of rows to read, and other options
+	 * @returns {AsyncGenerator<RecordBatch, void, undefined>}
 	 */
 	toArrowBatchIterator(...args) {
 		const options = parseArgs(args, ['maxResults'], {
@@ -51,13 +93,12 @@ export default class TabularReader extends Base {
 	}
 
 	/**
-	 * Reads the rows into an arrow Table. In the browser, reads are limited to 100MB by default (see `maxBytes`).
+	 * Reads the rows into an arrow Table, which other libraries (e.g. Arquero, DuckDB-Wasm, Observable Plot) can read
+	 * directly. In the browser, reads are limited to 100MB by default (see `maxBytes`).
 	 *
-	 * @param {number} [maxResults] The maximum number of rows to read
-	 * @param {object} [options] The same options as toArrowBatchIterator(), as well as:
-	 * @param {number|null} [options.maxBytes] Fail rather than read more than this many bytes into memory. Defaults
-	 *   to 100MB in the browser, and no limit in Node; pass null for no limit.
-	 * @returns {Promise<import('apache-arrow').Table>}
+	 * @param {[maxResults?: number | null, options?: ReadTableOptions] | [options?: ReadTableOptions & {maxResults?: number | null}]} args
+	 *   The maximum number of rows to read, and other options
+	 * @returns {Promise<ArrowTable>}
 	 */
 	async toArrowTable(...args) {
 		const options = parseArgs(args, ['maxResults'], {
@@ -74,14 +115,12 @@ export default class TabularReader extends Base {
 	 * Reads the rows into an array of plain objects, keyed by variable name. In the browser, reads are limited to 100MB
 	 * by default (see `maxBytes`).
 	 *
-	 * @param {number} [maxResults] The maximum number of rows to read
-	 * @param {object} [options] The same options as toArrowTable(), as well as:
-	 * @param {boolean} [options.bigInt=false] Return integers as BigInts, rather than Numbers (which lose precision
-	 *   beyond 2^53)
-	 * @param {boolean} [options.temporal=true] Return dates, dateTimes, and times as Temporal.PlainDate,
-	 *   Temporal.PlainDateTime, and Temporal.PlainTime. If false, dates and dateTimes are returned as Dates (in UTC,
-	 *   with millisecond precision) and times as strings (HH:MM:SS[.ffffff]).
-	 * @returns {Promise<object[]>}
+	 * By default, dates, dateTimes, and times are returned as `Temporal.PlainDate`, `Temporal.PlainDateTime`, and
+	 * `Temporal.PlainTime` (using a polyfill where Temporal isn't built in), and integers as Numbers.
+	 *
+	 * @param {[maxResults?: number | null, options?: RowsArrayOptions] | [options?: RowsArrayOptions & {maxResults?: number | null}]} args
+	 *   The maximum number of rows to read, and other options
+	 * @returns {Promise<Record<string, any>[]>}
 	 */
 	async toRowsArray(...args) {
 		const { bigInt, temporal, ...options } = parseArgs(args, ['maxResults'], {
@@ -93,11 +132,10 @@ export default class TabularReader extends Base {
 
 	/**
 	 * Creates a read session, split across up to `targetCount` streams that can each be read independently (e.g., by
-	 * separate workers) with the same to* methods.
+	 * separate workers) with the same `to*` methods.
 	 *
-	 * @param {number} [targetCount] The number of streams to request. The server may return fewer.
-	 * @param {object} [options]
-	 * @param {string[]} [options.variables] The variables to read, in order. Defaults to all.
+	 * @param {[targetCount?: number, options?: {variables?: string[]}] | [options?: {targetCount?: number, variables?: string[]}]} args
+	 *   The number of streams to request (the server may return fewer), and the variables to read
 	 * @returns {Promise<ReadStream[]>}
 	 */
 	async toReadStreams(...args) {
@@ -125,14 +163,11 @@ export default class TabularReader extends Base {
 	}
 
 	/**
-	 * Lists the files indexed by this table (or query result), as a Directory. The listing is cached, and only
-	 * downloaded again if it has changed.
+	 * Lists the files indexed by this table (or query result), as a Directory. The listing is cached, and only downloaded
+	 * again if it has changed.
 	 *
-	 * @param {object} [options]
-	 * @param {string} [options.fileIdVariable] The variable containing file ids, if not `file_id`
-	 * @param {string} [options.fileNameVariable] The variable containing file names, if not `file_name`
-	 * @param {AbortSignal} [options.signal]
-	 * @returns {Promise<import('./Directory.js').default>}
+	 * @param {[options?: FileListingOptions]} args
+	 * @returns {Promise<Directory>}
 	 */
 	async toDirectory(...args) {
 		const { fileIdVariable, fileNameVariable, signal } = parseArgs(args, [], {
@@ -144,8 +179,9 @@ export default class TabularReader extends Base {
 
 	/**
 	 * Returns the file at a path within this table's (or query result's) files.
-	 * @param {string} path
-	 * @returns {Promise<import('./File.js').default>}
+	 *
+	 * @param {[path: string] | [options: {path: string}]} args
+	 * @returns {Promise<File>}
 	 */
 	async file(...args) {
 		const { path } = parseArgs(args, ['path']);
@@ -164,9 +200,8 @@ export default class TabularReader extends Base {
 	/**
 	 * Lists every file indexed by this table (or query result).
 	 *
-	 * @param {number} [maxResults]
-	 * @param {object} [options] The same options as toDirectory()
-	 * @returns {Promise<import('./File.js').default[]>}
+	 * @param {[maxResults?: number | null, options?: FileListingOptions] | [options?: FileListingOptions & {maxResults?: number | null}]} args
+	 * @returns {Promise<File[]>}
 	 */
 	async listFiles(...args) {
 		const { maxResults, ...options } = parseArgs(args, ['maxResults'], {
@@ -177,16 +212,11 @@ export default class TabularReader extends Base {
 	}
 
 	/**
-	 * Exports the data to files (in Node), and downloads them.
+	 * Exports the data to files, and downloads them (in Node only).
 	 *
-	 * @param {string} [path] A file path, if the export is a single file; otherwise (or if it's an existing directory,
-	 *   or ends with a separator) the directory to download into. Defaults to the current working directory.
-	 * @param {object} [options]
-	 * @param {string} [options.format='csv'] e.g. `csv`, `parquet`, `avro`, `ndjson`, `stata`, `sas`, `spss`
-	 * @param {boolean} [options.overwrite=false]
-	 * @param {number} [options.maxConcurrency=16] The number of files to download at once
-	 * @param {(progress: object) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 * @param {[path?: string, options?: DataDownloadOptions] | [options?: DataDownloadOptions & {path?: string}]} args
+	 *   A file path, if the export is a single file; otherwise (or if it's an existing directory, or ends with a
+	 *   separator) the directory to download into. Defaults to the current working directory.
 	 * @returns {Promise<string[]>} The paths of the downloaded files
 	 */
 	async download(...args) {
@@ -207,22 +237,35 @@ export default class TabularReader extends Base {
 	}
 
 	// The table or query that this instance's files belong to
+	/**
+	 * @protected
+	 * @returns {Promise<{table?: import('./Table.js').default, query?: import('./Query.js').default}>}
+	 */
 	async _getFileSource() {
 		throw new ValueError('Listing files is only supported for tables and queries');
 	}
 
 	// The name of downloaded export files
+	/** @protected */
 	_getExportName() {
 		return (this.properties?.name || 'export').replace(/\W+/g, '_').toLowerCase();
 	}
 
-	// Waits for the instance to be readable, returning what we know about its size:
-	//   { numRows, numBytes, canListRows }
+	// Waits for the instance to be readable, returning what we know about its size
+	/**
+	 * @protected
+	 * @returns {Promise<{numRows?: number, numBytes?: number, canListRows: boolean}>}
+	 */
 	async _getReadInfo() {
 		throw new Error('Not implemented');
 	}
 
 	// Determines how the rows will be read: the sources to read them from, and the variables they're conformed to
+	/**
+	 * @protected
+	 * @param {{maxResults?: number | null, variables?: string[], maxParallelization?: number, maxBytes?: number | null, signal?: AbortSignal}} options
+	 * @returns {Promise<{sources: object[], mappedVariables: Record<string, any>[], totalRows?: number}>}
+	 */
 	async _prepareRead({ maxResults, variables, maxParallelization, maxBytes, signal }) {
 		const { numRows, numBytes, canListRows } = await this._getReadInfo();
 		const mappedVariables = await this.#getMappedVariables(variables, signal);
@@ -294,6 +337,9 @@ export default class TabularReader extends Base {
  * though its variables were already chosen when the read session was created.
  */
 export class ReadStream extends TabularReader {
+	/**
+	 * @param {[id: string, options: {parent: TabularReader, mappedVariables: Record<string, any>[], properties?: Record<string, any>}] | [options: {id: string, parent: TabularReader, mappedVariables: Record<string, any>[], properties?: Record<string, any>}]} args
+	 */
 	constructor(...args) {
 		super();
 		const { id, parent, mappedVariables, properties } = parseArgs(args, ['id'], {
@@ -310,18 +356,30 @@ export class ReadStream extends TabularReader {
 		return `<ReadStream ${this.id}>`;
 	}
 
+	/**
+	 * @returns {Promise<never>}
+	 */
 	async toReadStreams() {
 		throw new ValueError('A read stream is already part of a read session');
 	}
 
+	/**
+	 * @returns {Promise<never>}
+	 */
 	async download() {
 		throw new ValueError("Read streams can't be downloaded; download their table, query, or upload instead");
 	}
 
+	/** @protected */
 	async _getReadInfo() {
 		return { numRows: this.properties?.estimatedRows, canListRows: false };
 	}
 
+	/**
+	 * @protected
+	 * @param {{variables?: string[]}} options
+	 * @returns {Promise<{sources: object[], mappedVariables: Record<string, any>[], totalRows?: number}>}
+	 */
 	async _prepareRead({ variables }) {
 		if (variables) {
 			throw new ValueError(

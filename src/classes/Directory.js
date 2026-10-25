@@ -3,15 +3,30 @@ import { parseArgs } from '../common/args.js';
 import { ValueError } from '../common/errors.js';
 import { downloadFiles } from '../common/download.js';
 
+/** @typedef {import('./Table.js').default} Table */
+/** @typedef {import('./Query.js').default} Query */
+
+/**
+ * @typedef {object} ListDirectoryOptions
+ * @property {'all' | 'files' | 'directories'} [mode='all']
+ * @property {boolean} [recursive=false] Also list the contents of subdirectories
+ */
+
+/**
+ * @typedef {object} DirectoryDownloadOptions
+ * @property {number} [maxResults] The maximum number of files to download
+ * @property {boolean} [overwrite=false] Replace existing files with different contents
+ * @property {number} [maxConcurrency=32] The number of files to download at once
+ * @property {(progress: {bytesDownloaded: number, totalBytes: number, filesDownloaded: number, totalFiles: number}) => void} [onProgress]
+ * @property {AbortSignal} [signal]
+ */
+
 export default class Directory {
 	/**
 	 * A directory of files, built from a table's (or query's) file listing by `toDirectory()`.
 	 *
-	 * @param {object} options
-	 * @param {string} [options.path='/'] The directory's absolute path, e.g. `/images`
-	 * @param {import('./Table.js').default} [options.table]
-	 * @param {import('./Query.js').default} [options.query]
-	 * @param {Directory} [options.parent]
+	 * @param {[options: {path?: string, table?: Table, query?: Query, parent?: Directory}]} args The directory's absolute
+	 *   path (e.g. `/images`), and the table or query it belongs to
 	 */
 	constructor(...args) {
 		const {
@@ -25,10 +40,15 @@ export default class Directory {
 		if (!table && !query) {
 			throw new ValueError('A directory must belong to a table or query');
 		}
+		/** @type {string} */
 		this.path = path;
+		/** @type {string} */
 		this.name = path.split('/').pop();
+		/** @type {Table | undefined} */
 		this.table = table;
+		/** @type {Query | undefined} */
 		this.query = query;
+		/** @type {Directory | undefined} */
 		this.parent = parent;
 		/** @type {Map<string, Directory|File>} */
 		this.children = new Map();
@@ -41,11 +61,8 @@ export default class Directory {
 	/**
 	 * Lists the directory's files and subdirectories.
 	 *
-	 * @param {number} [maxResults]
-	 * @param {object} [options]
-	 * @param {'all'|'files'|'directories'} [options.mode='all']
-	 * @param {boolean} [options.recursive=false] Also list the contents of subdirectories
-	 * @returns {Array<Directory|File>}
+	 * @param {[maxResults?: number | null, options?: ListDirectoryOptions] | [options?: ListDirectoryOptions & {maxResults?: number | null}]} args
+	 * @returns {Array<Directory | File>}
 	 */
 	list(...args) {
 		const { maxResults, mode, recursive } = parseArgs(args, ['maxResults'], {
@@ -70,11 +87,11 @@ export default class Directory {
 	}
 
 	/**
-	 * Returns the file or directory at a path, relative to this directory (or absolute, from the root). A trailing
-	 * slash only matches a directory.
+	 * Returns the file or directory at a path, relative to this directory (or absolute, from the root). A trailing slash
+	 * only matches a directory.
 	 *
-	 * @param {string} path
-	 * @returns {Directory|File|null}
+	 * @param {[path: string] | [options: {path: string}]} args
+	 * @returns {Directory | File | null}
 	 */
 	get(...args) {
 		const { path } = parseArgs(args, ['path']);
@@ -107,16 +124,11 @@ export default class Directory {
 	}
 
 	/**
-	 * Downloads the directory's files (in Node), recreating its structure. Files that already exist with the same
+	 * Downloads the directory's files (in Node only), recreating its structure. Files that already exist with the same
 	 * contents are left as is.
 	 *
-	 * @param {string} [path] Defaults to a directory with this directory's name, in the current working directory
-	 * @param {object} [options]
-	 * @param {number} [options.maxResults] The maximum number of files to download
-	 * @param {boolean} [options.overwrite=false] Replace existing files with different contents
-	 * @param {number} [options.maxConcurrency=32] The number of files to download at once
-	 * @param {(progress: {bytesDownloaded: number, totalBytes: number, filesDownloaded: number, totalFiles: number}) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 * @param {[path?: string, options?: DirectoryDownloadOptions] | [options?: DirectoryDownloadOptions & {path?: string}]} args
+	 *   Defaults to a directory named after this one (or its table), in the current working directory
 	 * @returns {Promise<string[]>} The paths of the downloaded files
 	 */
 	async download(...args) {
@@ -144,6 +156,7 @@ export default class Directory {
 		);
 	}
 
+	/** @protected */
 	_addFile(file, parts = file.path.split('/').filter(Boolean)) {
 		if (parts.length === 1) {
 			this.children.set(parts[0], file);

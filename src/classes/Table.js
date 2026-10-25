@@ -11,15 +11,44 @@ import { mapConcurrent } from '../common/pool.js';
 import { createTempUploads, resolveFiles, uploadToTempUpload } from '../common/upload.js';
 import { definedValues, splitReference } from '../common/references.js';
 
+/** @typedef {import('../common/args.js').ListArgs} ListArgs */
+/** @typedef {import('../common/args.js').NameArgs} NameArgs */
+
+/**
+ * @typedef {object} TableOptions
+ * @property {Dataset} [dataset]
+ * @property {Workflow} [workflow]
+ * @property {Record<string, any>} [properties]
+ */
+
+/**
+ * Metadata to update for a variable, by name.
+ * @typedef {{name: string, label?: string, description?: string, valueLabels?: Record<string, string>}} VariableMetadata
+ */
+
+/**
+ * @typedef {string | Blob | ArrayBuffer | ArrayBufferView | {name: string, data: Blob | ArrayBuffer | ArrayBufferView | string} | {path: string, name?: string}} FileSpecification
+ *   A file path (in Node), a File (named by its path within a picked directory, if any), or `{ name, data }` (string
+ *   data is uploaded as UTF-8 text)
+ */
+
+/**
+ * @typedef {object} AddFilesOptions
+ * @property {FileSpecification[] | FileList} [files] The files to add
+ * @property {string} [directory] A local directory (in Node), whose files are all added, named by their path within
+ *   it. Hidden files are skipped.
+ * @property {number} [maxParallelization] The number of files to upload at once
+ * @property {(progress: {bytesUploaded: number, totalBytes: number, filesUploaded: number, totalFiles: number}) => void} [onProgress]
+ * @property {AbortSignal} [signal]
+ */
+
 export default class Table extends TabularReader {
 	/**
-	 * @param {string} name The table's name. If no dataset or workflow is given, this may be fully qualified
-	 *   (`owner.dataset_or_workflow.table`), or else the table is resolved within the configured defaultWorkflow or
-	 *   defaultDataset.
-	 * @param {object} [options]
-	 * @param {Dataset} [options.dataset]
-	 * @param {Workflow} [options.workflow]
-	 * @param {object} [options.properties]
+	 * A table in a dataset or workflow.
+	 *
+	 * @param {[name: string, options?: TableOptions] | [options: TableOptions & {name: string}]} args The table's name.
+	 *   If no dataset or workflow is given, this may be fully qualified (`owner.dataset_or_workflow.table`), or else the
+	 *   table is resolved within the configured `defaultWorkflow` or `defaultDataset`.
 	 */
 	constructor(...args) {
 		super();
@@ -55,10 +84,15 @@ export default class Table extends TabularReader {
 			);
 		}
 
+		/** @type {string} */
 		this.name = name;
+		/** @type {Dataset | undefined} */
 		this.dataset = dataset;
+		/** @type {Workflow | undefined} */
 		this.workflow = workflow;
+		/** @type {string} */
 		this.qualifiedReference = properties?.qualifiedReference ?? `${referenceScope}.${name}`;
+		/** @type {string} */
 		this.scopedReference = properties?.scopedReference ?? name;
 		if (properties?.uri) {
 			this.uri = properties.uri;
@@ -74,10 +108,9 @@ export default class Table extends TabularReader {
 	/**
 	 * Creates the table, in the next version of its dataset.
 	 *
-	 * @param {object} [options]
-	 * @param {string} [options.description]
-	 * @param {'append'|'replace'} [options.uploadMergeStrategy='append'] How uploads to the table are combined
-	 * @param {boolean} [options.isFileIndex=false] Whether the table is an index of files
+	 * @param {[options?: {description?: string, uploadMergeStrategy?: 'append' | 'replace', isFileIndex?: boolean}]} args
+	 *   `uploadMergeStrategy` is how uploads to the table are combined (default `append`); `isFileIndex` makes the table an
+	 *   index of files.
 	 * @returns {Promise<this>}
 	 */
 	async create(...args) {
@@ -100,10 +133,9 @@ export default class Table extends TabularReader {
 	}
 
 	/**
-	 * @param {object} options
-	 * @param {string} [options.name]
-	 * @param {string} [options.description]
-	 * @param {'append'|'replace'} [options.uploadMergeStrategy]
+	 * Updates the table's metadata. Only the options that are passed are changed.
+	 *
+	 * @param {[options: {name?: string, description?: string, uploadMergeStrategy?: 'append' | 'replace'}]} args
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {
@@ -113,6 +145,10 @@ export default class Table extends TabularReader {
 		return this;
 	}
 
+	/**
+	 * Deletes the table.
+	 * @returns {Promise<void>}
+	 */
 	async delete() {
 		await this._resolveForWrite();
 		await makeRequest({ method: 'DELETE', path: this.uri });
@@ -120,7 +156,8 @@ export default class Table extends TabularReader {
 
 	/**
 	 * Updates the metadata of many of the table's variables at once.
-	 * @param {object[]} variables
+	 *
+	 * @param {[variables: VariableMetadata[]] | [options: {variables: VariableMetadata[]}]} args
 	 * @returns {Promise<void>}
 	 */
 	async updateVariables(...args) {
@@ -130,7 +167,10 @@ export default class Table extends TabularReader {
 	}
 
 	/**
-	 * @param {string} [name] The upload's name. Defaults to the name of the uploaded file, if any.
+	 * Returns an upload to the table, which is created with `upload.create()`.
+	 *
+	 * @param {[name?: string] | [options?: {name?: string}]} args The upload's name. Defaults to the name of the uploaded
+	 *   file, if any.
 	 * @returns {Upload}
 	 */
 	upload(...args) {
@@ -138,6 +178,10 @@ export default class Table extends TabularReader {
 		return new Upload(name, { table: this });
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Upload[]>}
+	 */
 	async listUploads(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const uploads = await makePaginatedRequest({ path: `${this.uri}/uploads`, pageSize: 100, maxResults });
@@ -145,17 +189,9 @@ export default class Table extends TabularReader {
 	}
 
 	/**
-	 * Adds files to a file index table.
+	 * Adds files to a file index table, uploading them in parallel batches.
 	 *
-	 * @param {object} options One of files or directory is required
-	 * @param {Array<string|File|Blob|{name: string, data: Blob|ArrayBuffer|ArrayBufferView|string}|{path: string, name?: string}>|FileList} [options.files]
-	 *   The files to add: paths (in Node), Files (named by their path within a picked directory, if any), or
-	 *   `{ name, data }` objects. String data is uploaded as UTF-8 text.
-	 * @param {string} [options.directory] A local directory (in Node), whose files are all added, named by their path
-	 *   within it. Hidden files are skipped.
-	 * @param {number} [options.maxParallelization] The number of files to upload at once
-	 * @param {(progress: {bytesUploaded: number, totalBytes: number, filesUploaded: number, totalFiles: number}) => void} [options.onProgress]
-	 * @param {AbortSignal} [options.signal]
+	 * @param {[options: AddFilesOptions]} args
 	 * @returns {Promise<void>}
 	 */
 	async addFiles(...args) {
@@ -222,27 +258,38 @@ export default class Table extends TabularReader {
 		}
 	}
 
+	/**
+	 * @param {NameArgs} args
+	 * @returns {Variable}
+	 */
 	variable(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Variable(name, { table: this });
 	}
 
+	/**
+	 * @param {ListArgs} args
+	 * @returns {Promise<Variable[]>}
+	 */
 	async listVariables(...args) {
 		const { maxResults } = parseArgs(args, ['maxResults']);
 		const variables = await makePaginatedRequest({ path: `${this.uri}/variables`, pageSize: 1000, maxResults });
 		return variables.map((variable) => new Variable(variable.name, { table: this, properties: variable }));
 	}
 
+	/** @protected @returns {Promise<{table: Table}>} */
 	async _getFileSource() {
 		return { table: this };
 	}
 
+	/** @protected */
 	async _getReadInfo() {
 		// Always refetched, since the table may have changed
 		await this.get();
 		return { numRows: this.properties.numRows, numBytes: this.properties.numBytes, canListRows: true };
 	}
 
+	/** @protected */
 	_updateProperties(properties) {
 		super._updateProperties(properties);
 		this.name = properties.name;
@@ -258,6 +305,7 @@ export default class Table extends TabularReader {
 	// A table addressed within its workflow (/workflows/:workflow/tables/:table) may be inherited from one of the
 	//   workflow's datasources. Writes must never go through that URI, since that would make it easy to unintentionally
 	//   modify a table outside of the workflow, so the table is fetched to get its canonical URI first.
+	/** @protected */
 	async _resolveForWrite() {
 		if (isWorkflowScopedUri(this.uri)) {
 			await this.get();
@@ -266,6 +314,7 @@ export default class Table extends TabularReader {
 
 	// When the container came from a qualified reference, we don't know whether it's a dataset or a workflow until the
 	//   API tells us (or we ask)
+	/** @protected */
 	async _rectifyAmbiguousContainer() {
 		if (this.dataset && this.workflow) {
 			if (await this.dataset.exists()) {

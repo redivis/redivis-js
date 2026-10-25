@@ -1,5 +1,15 @@
 import { ValueError } from './errors.js';
 
+/**
+ * The arguments of a method that lists resources: `(maxResults?)` or `({ maxResults? })`.
+ * @typedef {[maxResults?: number | null] | [options?: {maxResults?: number | null}]} ListArgs
+ */
+
+/**
+ * The arguments of a method that takes a single name: `(name)` or `({ name })`.
+ * @typedef {[name: string] | [options: {name: string}]} NameArgs
+ */
+
 // Normalizes the arguments of a method that follows the `fn(...positional, options)` convention, where every
 //   positional argument can also be passed by name in the trailing options object. E.g., with positional
 //   ['maxResults'], `fn(10, { variables })` and `fn({ maxResults: 10, variables })` both return

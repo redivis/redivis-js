@@ -9,14 +9,24 @@ import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
 import { definedValues } from '../common/references.js';
 
+/**
+ * @typedef {object} DatasourceUpdateOptions
+ * @property {Dataset | string} [sourceDataset]
+ * @property {Workflow | string} [sourceWorkflow]
+ * @property {boolean} [sample] Whether to use the source dataset's sample
+ * @property {Version | string} [version] The version of the source dataset to use
+ * @property {Array<[Table | string, Table | string]> | Record<string, string>} [mappedTables] Pairs of
+ *   [sourceTable, destinationTable] (or a map of their scoped references), for when tables were renamed in the new
+ *   source
+ */
+
 export default class Datasource extends Base {
 	/**
 	 * A dataset or workflow that's a source of a workflow.
 	 *
-	 * @param {string|Dataset|Workflow} source The source dataset or workflow, or its qualified reference
-	 * @param {object} [options]
-	 * @param {Workflow|string} [options.workflow] Defaults to the configured defaultWorkflow
-	 * @param {object} [options.properties]
+	 * @param {[source: string | Dataset | Workflow, options?: {workflow?: Workflow | string, properties?: Record<string, any>}] | [options: {source: string | Dataset | Workflow, workflow?: Workflow | string, properties?: Record<string, any>}]} args
+	 *   The source dataset or workflow, or its qualified reference. The workflow defaults to the configured
+	 *   `defaultWorkflow`.
 	 */
 	constructor(...args) {
 		super();
@@ -29,7 +39,9 @@ export default class Datasource extends Base {
 			}
 			workflow = new Workflow(getConfigValue('defaultWorkflow'));
 		}
+		/** @type {Workflow} */
 		this.workflow = workflow;
+		/** @type {string} */
 		this.sourceReference = toReference(source);
 		this.uri = properties?.uri ?? `${workflow.uri}/dataSources/${encodeURIComponent(this.sourceReference)}`;
 		this.properties = properties;
@@ -58,13 +70,7 @@ export default class Datasource extends Base {
 	/**
 	 * Changes the datasource's source, its version or sample, or how its tables are mapped to those of a new source.
 	 *
-	 * @param {object} options
-	 * @param {Dataset|string} [options.sourceDataset]
-	 * @param {Workflow|string} [options.sourceWorkflow]
-	 * @param {boolean} [options.sample] Whether to use the source dataset's sample
-	 * @param {Version|string} [options.version] The version of the source dataset to use
-	 * @param {Array<[Table|string, Table|string]>|object} [options.mappedTables] Pairs of [sourceTable, destinationTable]
-	 *   (or a map of their scoped references), for when tables were renamed in the new source
+	 * @param {[options: DatasourceUpdateOptions]} args
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {
