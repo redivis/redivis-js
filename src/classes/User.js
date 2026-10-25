@@ -1,6 +1,8 @@
 import Base from './Base.js';
 import Dataset from './Dataset.js';
+import Secret from './Secret.js';
 import Workflow from './Workflow.js';
+import { makePaginatedRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 
 export default class User extends Base {
@@ -25,5 +27,22 @@ export default class User extends Base {
 	workflow(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Workflow(name, { user: this });
+	}
+
+	secret(...args) {
+		const { name } = parseArgs(args, ['name']);
+		return new Secret(name, { user: this });
+	}
+
+	async listDatasets(...args) {
+		const { maxResults } = parseArgs(args, ['maxResults']);
+		const datasets = await makePaginatedRequest({ path: `${this.uri}/datasets`, pageSize: 100, maxResults });
+		return datasets.map((dataset) => new Dataset(dataset.name, { user: this, properties: dataset }));
+	}
+
+	async listWorkflows(...args) {
+		const { maxResults } = parseArgs(args, ['maxResults']);
+		const workflows = await makePaginatedRequest({ path: `${this.uri}/workflows`, pageSize: 100, maxResults });
+		return workflows.map((workflow) => new Workflow(workflow.name, { user: this, properties: workflow }));
 	}
 }

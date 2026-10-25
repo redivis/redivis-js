@@ -1,7 +1,11 @@
 import Dataset from './src/classes/Dataset.js';
+import Datasource from './src/classes/Datasource.js';
+import Notebook from './src/classes/Notebook.js';
 import Organization from './src/classes/Organization.js';
+import Parameter from './src/classes/Parameter.js';
 import Query from './src/classes/Query.js';
 import Table from './src/classes/Table.js';
+import Transform from './src/classes/Transform.js';
 import User from './src/classes/User.js';
 import Workflow from './src/classes/Workflow.js';
 
@@ -42,6 +46,22 @@ export function query(...args) {
 	return new Query(...args);
 }
 
+export function datasource(...args) {
+	return new Datasource(...args);
+}
+
+export function parameter(...args) {
+	return new Parameter(...args);
+}
+
+export function transform(...args) {
+	return new Transform(...args);
+}
+
+export function notebook(...args) {
+	return new Notebook(...args);
+}
+
 /**
  * Returns the currently authenticated user.
  * @returns {Promise<User>}
@@ -74,6 +94,10 @@ export default {
 	workflow,
 	table,
 	query,
+	datasource,
+	parameter,
+	transform,
+	notebook,
 	currentUser,
 	currentWorkflow,
 };

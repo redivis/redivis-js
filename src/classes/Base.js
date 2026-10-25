@@ -13,7 +13,7 @@ export default class Base {
 	}
 
 	toString() {
-		return `<${this.constructor.name} ${this.qualifiedReference || this.name || this.uri}>`;
+		return `<${this.constructor.name} ${this.qualifiedReference || this.name || this.uri || '[unnamed]'}>`;
 	}
 
 	toJSON() {
@@ -48,8 +48,10 @@ export default class Base {
 	// Called with the API's representation of the resource whenever it's fetched, created, or updated
 	_updateProperties(properties) {
 		this.properties = properties;
-		if (properties?.uri) {
-			this.uri = properties.uri;
+		for (const key of ['uri', 'qualifiedReference', 'scopedReference']) {
+			if (properties?.[key]) {
+				this[key] = properties[key];
+			}
 		}
 	}
 }

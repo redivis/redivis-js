@@ -2,11 +2,11 @@ import Dataset from './Dataset.js';
 import TabularReader from './TabularReader.js';
 import Variable from './Variable.js';
 import Workflow from './Workflow.js';
-import { makePaginatedRequest } from '../common/apiRequest.js';
+import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
-import { splitReference } from '../common/references.js';
+import { definedValues, splitReference } from '../common/references.js';
 
 export default class Table extends TabularReader {
 	/**
@@ -57,13 +57,73 @@ export default class Table extends TabularReader {
 		this.workflow = workflow;
 		this.qualifiedReference = properties?.qualifiedReference ?? `${referenceScope}.${name}`;
 		this.scopedReference = properties?.scopedReference ?? name;
-		if (isWorkflowTable) {
+		if (properties?.uri) {
+			this.uri = properties.uri;
+		} else if (isWorkflowTable) {
 			// Tables are resolved within their workflow, which also finds tables inherited through its datasources
 			this.uri = `${workflow.uri}/tables/${encodeURIComponent(this.scopedReference)}`;
 		} else {
 			this.uri = `/tables/${encodeURIComponent(this.qualifiedReference)}`;
 		}
 		this.properties = properties;
+	}
+
+	/**
+	 * Creates the table, in the next version of its dataset.
+	 *
+	 * @param {object} [options]
+	 * @param {string} [options.description]
+	 * @param {'append'|'replace'} [options.uploadMergeStrategy='append'] How uploads to the table are combined
+	 * @param {boolean} [options.isFileIndex=false] Whether the table is an index of files
+	 * @returns {Promise<this>}
+	 */
+	async create(...args) {
+		const { description, uploadMergeStrategy, isFileIndex } = parseArgs(args, [], {
+			defaults: { uploadMergeStrategy: 'append', isFileIndex: false },
+			allowed: ['description'],
+		});
+		await this._rectifyAmbiguousContainer();
+		if (!this.dataset) {
+			throw new ValueError('Only tables in a dataset can be created');
+		}
+		this._updateProperties(
+			await makeRequest({
+				method: 'POST',
+				path: `${this.dataset.uri}/tables`,
+				payload: definedValues({ name: this.name, uploadMergeStrategy, isFileIndex, description }),
+			}),
+		);
+		return this;
+	}
+
+	/**
+	 * @param {object} options
+	 * @param {string} [options.name]
+	 * @param {string} [options.description]
+	 * @param {'append'|'replace'} [options.uploadMergeStrategy]
+	 * @returns {Promise<this>}
+	 */
+	async update(...args) {
+		const options = parseArgs(args, [], { allowed: ['name', 'description', 'uploadMergeStrategy'] });
+		await this._resolveForWrite();
+		this._updateProperties(await makeRequest({ method: 'PATCH', path: this.uri, payload: definedValues(options) }));
+		return this;
+	}
+
+	async delete() {
+		await this._resolveForWrite();
+		await makeRequest({ method: 'DELETE', path: this.uri });
+	}
+
+	/**
+	 * Updates the metadata of many of the table's variables at once.
+	 * @param {object[]} variables
+	 * @returns {Promise<void>}
+	 */
+	async updateVariables(...args) {
+		const { variables } = parseArgs(args, ['variables']);
+		await this._resolveForWrite();
+		await makeRequest({ method: 'PATCH', path: `${this.uri}/variables`, payload: { variables } });
 	}
 
 	variable(...args) {
@@ -85,8 +145,6 @@ export default class Table extends TabularReader {
 
 	_updateProperties(properties) {
 		super._updateProperties(properties);
-		this.qualifiedReference = properties.qualifiedReference;
-		this.scopedReference = properties.scopedReference;
 		this.name = properties.name;
 		if (this.dataset && this.workflow && properties.container?.kind) {
 			if (properties.container.kind === 'dataset') {
@@ -94,6 +152,15 @@ export default class Table extends TabularReader {
 			} else {
 				this.dataset = undefined;
 			}
+		}
+	}
+
+	// A table addressed within its workflow (/workflows/:workflow/tables/:table) may be inherited from one of the
+	//   workflow's datasources. Writes must never go through that URI, since that would make it easy to unintentionally
+	//   modify a table outside of the workflow, so the table is fetched to get its canonical URI first.
+	async _resolveForWrite() {
+		if (isWorkflowScopedUri(this.uri)) {
+			await this.get();
 		}
 	}
 
@@ -108,4 +175,17 @@ export default class Table extends TabularReader {
 			}
 		}
 	}
+}
+
+function isWorkflowScopedUri(uri) {
+	return /^\/workflows\/[^/]+\/tables\//.test(uri);
+}
+
+// The qualified reference to send for a table in a write (e.g., a transform's source table)
+export async function tableReferenceForWrite(table) {
+	if (table instanceof Table) {
+		await table._resolveForWrite();
+		return table.qualifiedReference;
+	}
+	return table;
 }

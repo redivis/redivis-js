@@ -8,7 +8,7 @@ import { makeRequest, makePaginatedRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
-import { splitReference } from '../common/references.js';
+import { definedValues, splitReference } from '../common/references.js';
 
 export default class Dataset extends Base {
 	/**
@@ -93,24 +93,65 @@ export default class Dataset extends Base {
 		return this;
 	}
 
+	/**
+	 * Updates the dataset's metadata. Only the options that are passed are changed.
+	 *
+	 * @param {object} options
+	 * @param {string} [options.name]
+	 * @param {'none'|'overview'|'metadata'|'sample'|'data'} [options.publicAccessLevel]
+	 * @param {string} [options.description]
+	 * @param {string} [options.methodologyMarkdown]
+	 * @param {string} [options.usageMarkdown]
+	 * @param {string[]} [options.labels] Replaces the dataset's labels
+	 * @param {string[]} [options.labelsToAdd]
+	 * @param {string[]} [options.labelsToRemove]
+	 * @param {string[]} [options.tags] Replaces the dataset's tags
+	 * @param {string[]} [options.tagsToAdd]
+	 * @param {string[]} [options.tagsToRemove]
+	 * @returns {Promise<this>}
+	 */
 	async update(...args) {
-		const { name, publicAccessLevel, description } = parseArgs(args, [], {
-			allowed: ['name', 'publicAccessLevel', 'description'],
+		const options = parseArgs(args, [], {
+			allowed: [
+				'name',
+				'publicAccessLevel',
+				'description',
+				'methodologyMarkdown',
+				'usageMarkdown',
+				'labels',
+				'labelsToAdd',
+				'labelsToRemove',
+				'tags',
+				'tagsToAdd',
+				'tagsToRemove',
+			],
 		});
-		const payload = {};
-
-		if (name) payload.name = name;
-		if (publicAccessLevel) payload.publicAccessLevel = publicAccessLevel;
-		if (description !== undefined) payload.description = description;
-
-		this._updateProperties(await makeRequest({ method: 'PATCH', path: this.uri, payload }));
+		this._updateProperties(await makeRequest({ method: 'PATCH', path: this.uri, payload: definedValues(options) }));
 		return this;
+	}
+
+	/**
+	 * Updates the metadata of many variables across the dataset's tables at once.
+	 * @param {object[]} variables
+	 * @returns {Promise<void>}
+	 */
+	async updateVariables(...args) {
+		const { variables } = parseArgs(args, ['variables']);
+		await makeRequest({ method: 'PATCH', path: `${this.uri}/variables`, payload: { variables } });
 	}
 
 	async delete() {
 		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
 
+	/**
+	 * Creates the next (unreleased) version of the dataset, where changes can be made before it's released.
+	 *
+	 * @param {object} [options]
+	 * @param {boolean} [options.ifNotExists=false] Return the existing next version, rather than throwing, if there
+	 *   already is one
+	 * @returns {Promise<Dataset>} The dataset at its next version
+	 */
 	async createNextVersion(...args) {
 		const { ifNotExists } = parseArgs(args, [], { defaults: { ifNotExists: false } });
 		if (!this.properties || !('nextVersion' in this.properties)) {
@@ -131,10 +172,62 @@ export default class Dataset extends Base {
 		}).get();
 	}
 
-	async release() {
-		const { datasetUri } = await makeRequest({ method: 'POST', path: `${this.uri}/versions/next/release` });
+	/**
+	 * Releases the next version of the dataset.
+	 * @param {object} [options]
+	 * @param {string} [options.releaseNotes]
+	 * @returns {Promise<this>} This dataset, at the newly released version
+	 */
+	async release(...args) {
+		const { releaseNotes } = parseArgs(args, [], { allowed: ['releaseNotes'] });
+		const { datasetUri } = await makeRequest({
+			method: 'POST',
+			path: `${this.uri}/versions/next/release`,
+			payload: { releaseNotes },
+		});
 		this.uri = datasetUri;
 		return this.get();
+	}
+
+	/**
+	 * Unreleases the current version of the dataset, making it the next version again.
+	 * @returns {Promise<this>} This dataset, at its (now unreleased) next version
+	 */
+	async unrelease() {
+		const { datasetUri } = await makeRequest({ method: 'POST', path: `${this.uri}/versions/current/unrelease` });
+		this.uri = datasetUri;
+		return this.get();
+	}
+
+	/**
+	 * Returns a version of the dataset: the given tag, or else the version this dataset refers to.
+	 * @param {string} [tag]
+	 * @returns {Promise<Version>}
+	 */
+	async version(...args) {
+		const { tag } = parseArgs(args, ['tag']);
+		if (!tag && !this.versionTag) {
+			await this.get();
+		}
+		return new Version(tag || this.versionTag, { dataset: this });
+	}
+
+	/**
+	 * Returns the dataset at the version before this one, or null if this is the first version.
+	 * @returns {Promise<Dataset|null>}
+	 */
+	async previousVersion() {
+		const version = await (await this.version()).previousVersion();
+		return version && version.dataset();
+	}
+
+	/**
+	 * Returns the dataset at the version after this one, or null if this is the latest version.
+	 * @returns {Promise<Dataset|null>}
+	 */
+	async nextVersion() {
+		const version = await (await this.version()).nextVersion();
+		return version && version.dataset();
 	}
 
 	async listVersions(...args) {
@@ -151,9 +244,10 @@ export default class Dataset extends Base {
 
 	_updateProperties(properties) {
 		super._updateProperties(properties);
-		this.qualifiedReference = properties.qualifiedReference;
-		this.scopedReference = properties.scopedReference;
 		this.name = properties.name;
+		if (properties.version?.tag) {
+			this.versionTag = normalizeVersionTag(properties.version.tag);
+		}
 		if (this.user && this.organization && properties.owner?.kind) {
 			if (properties.owner.kind === 'user') {
 				this.organization = undefined;
@@ -176,9 +270,14 @@ export default class Dataset extends Base {
 	}
 }
 
+// The tags `v1.0` and `v1_0` are equivalent, but only the latter can be used in a reference
 export function normalizeVersionTag(tag) {
-	if (tag && tag !== 'current' && tag !== 'next' && !tag.toLowerCase().startsWith('v')) {
+	if (!tag) {
+		return undefined;
+	}
+	tag = String(tag).replace(/^(v?\d+)\.(\d+)$/i, '$1_$2');
+	if (tag !== 'current' && tag !== 'next' && !tag.toLowerCase().startsWith('v')) {
 		return `v${tag}`;
 	}
-	return tag || undefined;
+	return tag;
 }
