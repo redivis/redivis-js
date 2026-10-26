@@ -39,8 +39,8 @@ export default class Variable extends Base {
 	}
 
 	/**
-	 * @param {[options: {label?: string, description?: string, valueLabels?: Record<string, string>}]} args
-	 *   `valueLabels` maps values to their labels
+	 * @param {[options: {label?: string, description?: string, valueLabels?: {value: string, label: string}[]}]} args
+	 *   `valueLabels` labels each of the variable's values, e.g. `[{ value: 'a', label: 'The letter a' }]`
 	 * @returns {Promise<this>}
 	 */
 	async update(...args) {

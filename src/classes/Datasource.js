@@ -52,7 +52,7 @@ export default class Datasource extends Base {
 	}
 
 	/**
-	 * Adds the source to the workflow.
+	 * Adds the datasource to the workflow.
 	 * @returns {Promise<this>}
 	 */
 	async create() {
@@ -65,6 +65,14 @@ export default class Datasource extends Base {
 			}),
 		);
 		return this;
+	}
+
+	/**
+	 * Removes the datasource from the workflow, along with the transforms and notebooks that depend on it.
+	 * @returns {Promise<void>}
+	 */
+	async delete() {
+		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
 
 	/**

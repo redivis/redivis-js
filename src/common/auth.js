@@ -10,6 +10,8 @@ const browserStorageKey = 'redivis_oauth_token';
 
 // undefined until first loaded; null when there are no cached credentials
 let cachedCredentials;
+// Incremented whenever the credentials are written or cleared
+let credentialsGeneration = 0;
 let apiToken;
 let apiProxy;
 let authLock = Promise.resolve();
@@ -501,21 +503,29 @@ async function loadCachedCredentials() {
 	if (cachedCredentials) {
 		return cachedCredentials;
 	}
+	const generation = credentialsGeneration;
+	let credentials = null;
 	try {
 		if (isNode) {
 			const { readFile } = await importNodeModule('fs/promises');
 			const { credentialsFile } = await getCredentialsPaths();
-			cachedCredentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
+			credentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
 		} else {
-			cachedCredentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
+			credentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
 		}
 	} catch (e) {
 		// ignore; there are no readable credentials
+	}
+	// Credentials written (or cleared) while this was reading are newer than what it read, e.g. when a concurrent
+	//   request refreshed them
+	if (generation === credentialsGeneration) {
+		cachedCredentials = credentials;
 	}
 	return cachedCredentials || null;
 }
 
 async function writeCachedCredentials(credentials) {
+	credentialsGeneration++;
 	cachedCredentials = credentials;
 	if (!isNode) {
 		try {
@@ -547,6 +557,7 @@ async function writeCachedCredentials(credentials) {
 }
 
 async function clearCachedCredentials() {
+	credentialsGeneration++;
 	cachedCredentials = null;
 	if (isNode) {
 		const { rm } = await importNodeModule('fs/promises');

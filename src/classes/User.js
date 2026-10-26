@@ -4,6 +4,7 @@ import Secret from './Secret.js';
 import Workflow from './Workflow.js';
 import { makePaginatedRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
+import { NotFoundError } from '../common/errors.js';
 
 /** @typedef {import('../common/args.js').ListArgs} ListArgs */
 /** @typedef {import('../common/args.js').NameArgs} NameArgs */
@@ -49,6 +50,23 @@ export default class User extends Base {
 	secret(...args) {
 		const { name } = parseArgs(args, ['name']);
 		return new Secret(name, { user: this });
+	}
+
+	// There's no endpoint to get a user directly, so check whether their datasets can be listed
+	/**
+	 * Whether the user exists.
+	 * @returns {Promise<boolean>}
+	 */
+	async exists() {
+		try {
+			await makePaginatedRequest({ path: `${this.uri}/datasets`, maxResults: 1 });
+			return true;
+		} catch (e) {
+			if (e instanceof NotFoundError) {
+				return false;
+			}
+			throw e;
+		}
 	}
 
 	/**

@@ -54,7 +54,7 @@ import { toRowsArray } from '../common/rowsArray.js';
 
 /**
  * @typedef {object} DataDownloadOptions
- * @property {string} [format='csv'] e.g. `csv`, `parquet`, `avro`, `ndjson`, `stata`, `sas`, or `spss`
+ * @property {string} [format='csv'] One of `csv`, `parquet`, `jsonl`, `avro`, `dta` (Stata), `sas7bdat` (SAS), or `sav` (SPSS)
  * @property {boolean} [overwrite=false] Replace existing files
  * @property {number} [maxConcurrency=16] The number of files to download at once
  * @property {(progress: {stage: 'exporting' | 'downloading'} & Record<string, number>) => void} [onProgress]

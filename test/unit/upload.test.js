@@ -145,7 +145,7 @@ test('uploads rows and arrow tables as newline-delimited JSON', async () => {
 		await bodyText(put.rawBody),
 		'{"id":9007199254740993,"when":"2020-01-02","at":"1970-01-01T00:00:00.000Z","name":"a"}\n{"id":1,"name":null}',
 	);
-	assert.equal(requests.at(-1).body.type, 'ndjson');
+	assert.equal(requests.at(-1).body.type, 'jsonl');
 
 	const { requests: arrowRequests } = mockUploads();
 	await table()

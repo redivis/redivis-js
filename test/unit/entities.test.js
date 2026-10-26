@@ -54,6 +54,33 @@ test('datasets are created under their owner, once it is known whether that is a
 	assert.deepEqual(requests.at(-1).body, { name: 'ds', description: 'Hi', publicAccessLevel: 'none' });
 });
 
+test('workflows are created under their owner, once it is known whether that is a user or organization', async () => {
+	const workflowProperties = {
+		name: 'wf',
+		uri: '/workflows/demo.wf',
+		qualifiedReference: 'demo.wf',
+		owner: { kind: 'organization', userName: 'demo' },
+	};
+	const requests = mockRoutes({
+		'GET /organizations/demo/datasets?maxResults=1': { results: [] },
+		'POST /organizations/demo/workflows': workflowProperties,
+		'POST /users/jane/workflows': { ...workflowProperties, owner: { kind: 'user' } },
+		'DELETE /workflows/demo.wf': new Response(null, { status: 204 }),
+	});
+
+	const workflow = await redivis.workflow('demo.wf').create({ description: 'Hi' });
+	assert.equal(workflow.user, undefined);
+	assert.equal(workflow.organization.name, 'demo');
+	assert.deepEqual(requests.at(-1).body, { name: 'wf', description: 'Hi', isPublic: false });
+
+	await redivis.user('jane').workflow('wf').create({ isPublic: true });
+	assert.deepEqual(requests.at(-1).body, { name: 'wf', isPublic: true });
+	await assert.rejects(redivis.user('jane').workflow('wf').create({ public: true }), ValueError);
+
+	await workflow.delete();
+	assert.equal(requests.at(-1).method, 'DELETE');
+});
+
 test('releases and unreleases dataset versions', async () => {
 	const requests = mockRoutes({
 		'POST /datasets/demo.ds/versions/next/release': { datasetUri: '/datasets/demo.ds:v2_0' },
@@ -198,7 +225,7 @@ test('workflows list their contents', async () => {
 	assert.deepEqual(requests.at(-1).body, { variables: [] });
 });
 
-test('datasources are created from a dataset or workflow', async () => {
+test('datasources are created from a dataset or workflow, and deleted', async () => {
 	const requests = mockRoutes({
 		'HEAD /datasets/demo.ds': new Response(null, { status: 200 }),
 		'HEAD /datasets/jane.other': new Response(null, { status: 404 }),
@@ -207,12 +234,22 @@ test('datasources are created from a dataset or workflow', async () => {
 			uri: '/workflows/jane.wf/dataSources/x',
 			...body,
 		}),
+		'DELETE /workflows/jane.wf/dataSources/x': new Response(null, { status: 204 }),
+		'DELETE /workflows/jane.wf/dataSources/demo.ds': new Response(null, { status: 204 }),
 	});
 	const workflow = redivis.workflow('jane.wf');
-	await workflow.datasource('demo.ds').create();
+	const datasource = await workflow.datasource('demo.ds').create();
 	await workflow.datasource(redivis.workflow('jane.other')).create();
 	const creates = requests.filter(({ method }) => method === 'POST').map(({ body }) => body);
 	assert.deepEqual(creates, [{ sourceDataset: 'demo.ds' }, { sourceWorkflow: 'jane.other' }]);
+
+	// At the URI it was created with, or by its source
+	await datasource.delete();
+	await workflow.datasource('demo.ds').delete();
+	assert.deepEqual(
+		requests.filter(({ method }) => method === 'DELETE').map(({ path }) => path),
+		['/workflows/jane.wf/dataSources/x', '/workflows/jane.wf/dataSources/demo.ds'],
+	);
 });
 
 test('datasources can change version, sample, and table mappings', async () => {
@@ -318,6 +355,7 @@ test('transforms are created from a table, and run until their job finishes', as
 			outputTable: { qualifiedReference: 'jane.wf.out', uri: '/tables/out' },
 		}),
 		'POST /transforms/x/cancel': { uri: '/transforms/x' },
+		'DELETE /transforms/x': new Response(null, { status: 204 }),
 	});
 	const transform = redivis.workflow('jane.wf').transform();
 	await transform.create({ sourceTable: redivis.table('demo.ds.t'), query: 'SELECT 1' });
@@ -334,6 +372,9 @@ test('transforms are created from a table, and run until their job finishes', as
 
 	await transform.run({ waitForFinish: false });
 	assert.equal(await transform.cancel(), transform);
+
+	await transform.delete();
+	assert.equal(`${requests.at(-1).method} ${requests.at(-1).path}`, 'DELETE /transforms/x');
 });
 
 test('rejects workflow children without a workflow', () => {
@@ -342,4 +383,15 @@ test('rejects workflow children without a workflow', () => {
 	assert.throws(() => redivis.notebook('n'), ValueError);
 	assert.throws(() => redivis.datasource('demo.ds'), ValueError);
 	assert.equal(redivis.notebook('n', { workflow: 'jane.wf' }).uri, '/notebooks/jane.wf.n');
+});
+
+test('users exist if their datasets can be listed, since there is no endpoint to get a user', async () => {
+	const requests = mockRoutes({
+		'GET /users/jane/datasets?maxResults=1': { results: [] },
+		'GET /users/nobody/datasets?maxResults=1': jsonResponse({ error: 'not_found' }, { status: 404 }),
+	});
+
+	assert.equal(await redivis.user('jane').exists(), true);
+	assert.equal(await redivis.user('nobody').exists(), false);
+	assert.ok(requests.every(({ method }) => method === 'GET'));
 });

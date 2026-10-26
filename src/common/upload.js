@@ -43,7 +43,7 @@ export async function resolveContent(content, { size, name } = {}) {
 	}
 	if (Array.isArray(content) || content instanceof ArrowTable) {
 		const blob = await toNdjsonBlob(content);
-		return { source: blobSource(blob), size: blob.size, name, type: 'ndjson' };
+		return { source: blobSource(blob), size: blob.size, name, type: 'jsonl' };
 	}
 	throw new ValueError(
 		'Content must be a Blob, File, ArrayBuffer, typed array, ReadableStream, file path (in Node), array of row ' +

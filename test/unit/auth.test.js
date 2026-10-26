@@ -1,0 +1,174 @@
+import { jsonResponse, mockFetch } from './helpers.js';
+import { after, beforeEach, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import redivis from '../../index.js';
+import { APIError } from '../../src/common/errors.js';
+
+// Credentials are cached in their own directory, rather than the helpers' API token being used
+const configDir = await mkdtemp(join(tmpdir(), 'redivis-auth-test-'));
+const credentialsFile = join(configDir, 'js_credentials');
+process.env.REDIVIS_CONFIG_DIR = configDir;
+delete process.env.REDIVIS_API_TOKEN;
+
+after(() => rm(configDir, { recursive: true, force: true }));
+
+beforeEach(async () => {
+	delete process.env.REDIVIS_API_TOKEN;
+	await redivis.deauthorize();
+});
+
+const inAnHour = () => Date.now() / 1000 + 3600;
+
+async function cacheCredentials(credentials) {
+	await writeFile(credentialsFile, JSON.stringify({ refresh_token: 'refresh-1', ...credentials }));
+}
+
+// Mocks the API, which responds to requests authorized with `validToken`, and the OAuth server, which issues
+//   `newToken` for a valid refresh token
+function mockAuth({ validToken = 'access-2', newToken = 'access-2', refreshStatus = 200 } = {}) {
+	return mockFetch(({ path, headers, body }) => {
+		if (path === '/oauth/token') {
+			assert.equal(body.grant_type, 'refresh_token');
+			return refreshStatus === 200
+				? jsonResponse({ access_token: newToken, expires_at: inAnHour(), expires_in: 3600 })
+				: jsonResponse({ error: 'invalid_grant' }, { status: refreshStatus });
+		} else if (path === '/oauth/device_authorization') {
+			// Rather than start an interactive login
+			return jsonResponse({ error: 'invalid_client' }, { status: 400 });
+		} else if (path === '/public') {
+			return jsonResponse({ ok: true });
+		}
+		return headers.Authorization === `Bearer ${validToken}`
+			? jsonResponse({ ok: true })
+			: jsonResponse({ error: 'invalid_token' }, { status: 401 });
+	});
+}
+
+const authorizationHeaders = (requests) =>
+	requests.filter(({ path }) => !path.startsWith('/oauth')).map(({ headers }) => headers.Authorization);
+
+test('without credentials, requests are made anonymously', async () => {
+	const requests = mockAuth();
+
+	assert.equal(await redivis.isAuthorized(), false);
+	await redivis.makeApiRequest({ path: '/public' });
+
+	assert.deepEqual(authorizationHeaders(requests), [undefined]);
+});
+
+test('an API token from the environment is sent, and never refreshed', async () => {
+	process.env.REDIVIS_API_TOKEN = 'env-token';
+	const requests = mockAuth({ validToken: 'env-token' });
+
+	assert.equal(await redivis.isAuthorized(), true);
+	await redivis.makeApiRequest({ path: '/private' });
+	assert.deepEqual(authorizationHeaders(requests), ['Bearer env-token']);
+
+	// A rejected token can't be fixed by logging in, so the error is thrown
+	process.env.REDIVIS_API_TOKEN = 'revoked-token';
+	await assert.rejects(redivis.makeApiRequest({ path: '/private' }), (error) => {
+		assert.ok(error instanceof APIError);
+		assert.equal(error.status, 401);
+		return true;
+	});
+	assert.equal(requests.filter(({ path }) => path.startsWith('/oauth')).length, 0);
+});
+
+test('authorize({ apiToken }) holds the token in memory only', async () => {
+	const requests = mockAuth({ validToken: 'given-token' });
+
+	await redivis.authorize({ apiToken: 'given-token' });
+	await redivis.makeApiRequest({ path: '/private' });
+
+	assert.deepEqual(authorizationHeaders(requests), ['Bearer given-token']);
+	await assert.rejects(stat(credentialsFile), { code: 'ENOENT' });
+
+	await redivis.deauthorize();
+	assert.equal(await redivis.isAuthorized(), false);
+});
+
+test('cached credentials are read from REDIVIS_CONFIG_DIR', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: inAnHour() });
+	const requests = mockAuth({ validToken: 'access-1' });
+
+	assert.equal(await redivis.isAuthorized(), true);
+	await redivis.makeApiRequest({ path: '/private' });
+
+	assert.deepEqual(authorizationHeaders(requests), ['Bearer access-1']);
+});
+
+test('an access token that is about to expire is refreshed first, once', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: Date.now() / 1000 + 60 });
+	const requests = mockAuth({ newToken: 'access-2' });
+
+	await Promise.all([redivis.makeApiRequest({ path: '/a' }), redivis.makeApiRequest({ path: '/b' })]);
+
+	assert.deepEqual(authorizationHeaders(requests), ['Bearer access-2', 'Bearer access-2']);
+	assert.equal(requests.filter(({ path }) => path === '/oauth/token').length, 1);
+	// The refreshed token is saved, with the refresh token, readable only by this user
+	const saved = JSON.parse(await readFile(credentialsFile, 'utf8'));
+	assert.equal(saved.access_token, 'access-2');
+	assert.equal(saved.refresh_token, 'refresh-1');
+	assert.equal((await stat(credentialsFile)).mode & 0o777, 0o600);
+});
+
+test('a rejected access token is refreshed, and the request retried', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: inAnHour() });
+	const requests = mockAuth({ validToken: 'access-2', newToken: 'access-2' });
+
+	assert.deepEqual(await redivis.makeApiRequest({ path: '/private' }), { ok: true });
+
+	assert.deepEqual(
+		requests.map(({ path }) => path),
+		['/private', '/oauth/token', '/private'],
+	);
+	assert.deepEqual(authorizationHeaders(requests), ['Bearer access-1', 'Bearer access-2']);
+});
+
+test('a rejected refresh token clears the credentials, and requires a login', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: Date.now() / 1000 + 60 });
+	const requests = mockAuth({ refreshStatus: 400 });
+
+	// The (mocked) login fails, rather than prompting
+	await assert.rejects(redivis.makeApiRequest({ path: '/private' }), { message: 'invalid_client', status: 400 });
+
+	assert.ok(requests.some(({ path }) => path === '/oauth/device_authorization'));
+	await assert.rejects(stat(credentialsFile), { code: 'ENOENT' });
+	assert.equal(await redivis.isAuthorized(), false);
+});
+
+test('a failed refresh for another reason keeps the credentials', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: Date.now() / 1000 + 60 });
+	mockAuth({ refreshStatus: 500 });
+
+	await assert.rejects(redivis.makeApiRequest({ path: '/private' }), { status: 500 });
+
+	assert.equal(JSON.parse(await readFile(credentialsFile, 'utf8')).refresh_token, 'refresh-1');
+});
+
+test('deauthorize() deletes the cached credentials', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: inAnHour() });
+	assert.equal(await redivis.isAuthorized(), true);
+
+	await redivis.deauthorize();
+
+	assert.equal(await redivis.isAuthorized(), false);
+	await assert.rejects(stat(credentialsFile), { code: 'ENOENT' });
+});
+
+// Last, since a proxy can't be unset
+test('requests through an API proxy carry its headers, and never log in', async () => {
+	const requests = mockFetch(() => jsonResponse({ error: 'invalid_token' }, { status: 401 }));
+	assert.throws(() => redivis.setApiProxy({}), /baseUrl/);
+
+	redivis.setApiProxy('https://proxy.test/redivis', { headers: { 'X-Proxy-Key': 'k' } });
+	await assert.rejects(redivis.makeApiRequest({ path: '/private' }), { status: 401 });
+
+	assert.equal(requests.length, 1);
+	assert.equal(requests[0].url.href, 'https://proxy.test/redivis/private');
+	assert.equal(requests[0].headers['X-Proxy-Key'], 'k');
+	assert.equal(requests[0].headers.Authorization, undefined);
+});

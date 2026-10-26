@@ -11,7 +11,7 @@ import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
-import { splitReference } from '../common/references.js';
+import { definedValues, splitReference } from '../common/references.js';
 
 /** @typedef {import('../common/args.js').ListArgs} ListArgs */
 /** @typedef {import('./Dataset.js').default} Dataset */
@@ -69,6 +69,36 @@ export default class Workflow extends Base {
 			properties?.qualifiedReference ?? `${(this.organization || this.user).name}.${this.scopedReference}`;
 		this.uri = properties?.uri ?? `/workflows/${encodeURIComponent(this.qualifiedReference)}`;
 		this.properties = properties;
+	}
+
+	/**
+	 * Creates the workflow.
+	 *
+	 * @param {[options?: {description?: string, isPublic?: boolean}]} args `isPublic` lets anyone view the workflow
+	 * @returns {Promise<this>}
+	 */
+	async create(...args) {
+		const { description, isPublic } = parseArgs(args, [], {
+			defaults: { isPublic: false },
+			allowed: ['description'],
+		});
+		await this._rectifyAmbiguousOwner();
+		this._updateProperties(
+			await makeRequest({
+				method: 'POST',
+				path: `${(this.organization || this.user).uri}/workflows`,
+				payload: definedValues({ name: this.name, description, isPublic }),
+			}),
+		);
+		return this;
+	}
+
+	/**
+	 * Deletes the workflow.
+	 * @returns {Promise<void>}
+	 */
+	async delete() {
+		await makeRequest({ method: 'DELETE', path: this.uri });
 	}
 
 	/**
@@ -209,6 +239,19 @@ export default class Workflow extends Base {
 				this.organization = undefined;
 			} else {
 				this.user = undefined;
+			}
+		}
+	}
+
+	// When the owner came from a qualified reference, we don't know whether it's a user or an organization until the
+	//   API tells us (or we ask)
+	/** @protected */
+	async _rectifyAmbiguousOwner() {
+		if (this.user && this.organization) {
+			if (await this.organization.exists()) {
+				this.user = undefined;
+			} else {
+				this.organization = undefined;
 			}
 		}
 	}

@@ -16,7 +16,7 @@ import { createTempUploads, resolveContent, uploadToTempUpload } from '../common
 
 /**
  * @typedef {object} UploadOptions
- * @property {string} [type] The file type (e.g. `delimited`, `parquet`, `ndjson`, `stream`). Inferred from the name
+ * @property {string} [type] The file type (e.g. `delimited`, `parquet`, `jsonl`, `stream`). Inferred from the name
  *   if not given.
  * @property {number} [size] The size in bytes, required when the content is a ReadableStream
  * @property {Record<string, any>} [transferSpecification] Import the data from another source (e.g., a URL or a cloud

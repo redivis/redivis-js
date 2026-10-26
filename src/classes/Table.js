@@ -23,7 +23,7 @@ import { definedValues, splitReference } from '../common/references.js';
 
 /**
  * Metadata to update for a variable, by name.
- * @typedef {{name: string, label?: string, description?: string, valueLabels?: Record<string, string>}} VariableMetadata
+ * @typedef {{name: string, label?: string, description?: string, valueLabels?: {value: string, label: string}[]}} VariableMetadata
  */
 
 /**

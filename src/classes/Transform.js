@@ -75,6 +75,14 @@ export default class Transform extends Base {
 	}
 
 	/**
+	 * Deletes the transform.
+	 * @returns {Promise<void>}
+	 */
+	async delete() {
+		await makeRequest({ method: 'DELETE', path: this.uri });
+	}
+
+	/**
 	 * Runs the transform, and (by default) waits for the run to finish, throwing a JobError if it fails.
 	 *
 	 * @param {[options?: {waitForFinish?: boolean, signal?: AbortSignal}]} args The signal stops waiting, but doesn't
