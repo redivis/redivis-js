@@ -208,7 +208,7 @@ describe('uploads', { skip, concurrency: true }, () => {
 		const dataset = await createDataset(t);
 		const table = await dataset.table('data').create({ uploadMergeStrategy: 'replace' });
 		await table.upload('first.csv').create(encode(SMALL_CSV));
-		await dataset.release();
+		await dataset.release({ waitForFinalization: true });
 
 		const nextTable = (await dataset.createNextVersion()).table('data');
 		await nextTable.upload('second.csv').create(encode('id,name,value\n9,z,9.5\n'));
@@ -224,7 +224,7 @@ describe('uploads', { skip, concurrency: true }, () => {
 		const dataset = await createDataset(t);
 		const table = await dataset.table('data').create();
 		await table.upload('first.csv').create(encode(SMALL_CSV));
-		await dataset.release();
+		await dataset.release({ waitForFinalization: true });
 
 		const nextTable = (await dataset.createNextVersion()).table('data');
 		await nextTable.upload('second.csv').create(encode('id,name,value\n9,z,9.5\n'));

@@ -1,0 +1,150 @@
+# Releases the package when the version in package.json changes on main; see CONTRIBUTING.md. If there's no tag for
+# that version yet, this runs the unit tests, publishes the package to npm, and then creates a GitHub release (and its
+# tag) for the version, with its notes from CHANGELOG.md.
+# Authenticates with npm's trusted publishing, so there's no access token to store.
+name: Publish to npm
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+# Releases happen one at a time, in the order they're merged
+concurrency:
+    group: publish
+    cancel-in-progress: false
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        outputs:
+            name: ${{ steps.version.outputs.name }}
+            version: ${{ steps.version.outputs.version }}
+            release: ${{ steps.version.outputs.release }}
+            prerelease: ${{ steps.version.outputs.prerelease }}
+        steps:
+            - uses: actions/checkout@v5
+            - id: version
+              name: Check whether this version has been released
+              run: |
+                  name=$(node -p "require('./package.json').name")
+                  version=$(node -p "require('./package.json').version")
+                  echo "name=$name" >> "$GITHUB_OUTPUT"
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+                  # Exits with 2 if there's no such tag, or with another code if it couldn't check
+                  if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+                    echo "v$version has already been released"
+                    echo "release=false" >> "$GITHUB_OUTPUT"
+                  else
+                    status=$?
+                    if [ "$status" -ne 2 ]; then exit "$status"; fi
+                    echo "Releasing v$version"
+                    echo "release=true" >> "$GITHUB_OUTPUT"
+                  fi
+                  # e.g., 0.4.0-rc.1, which is published under the "next" tag, so npm only installs it when asked for it
+                  if [[ "$version" == *-* ]]; then
+                    echo "prerelease=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "prerelease=false" >> "$GITHUB_OUTPUT"
+                  fi
+            # Before anything is published, so that a version is never released without notes
+            - name: Check CHANGELOG.md has notes for this version
+              if: steps.version.outputs.release == 'true'
+              run: node .github/scripts/release-notes.js "${{ steps.version.outputs.version }}" > /dev/null
+
+    test:
+        needs: check
+        if: needs.check.outputs.release == 'true'
+        uses: ./.github/workflows/test.yml
+
+    build:
+        needs: [check, test]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: '24'
+                  cache: npm
+            - run: npm ci
+            - run: npm run build:types
+            - run: mkdir dist && npm pack --pack-destination dist
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: dist
+                  path: dist/
+
+    # Publishes the tarball that was built above, so that nothing else (like dependencies' install scripts) runs with
+    # the permission to publish
+    publish:
+        needs: [check, build]
+        runs-on: ubuntu-latest
+        # Must match the environment configured for the trusted publisher on npm
+        environment:
+            name: npm
+            url: https://www.npmjs.com/package/${{ needs.check.outputs.name }}
+        permissions:
+            id-token: write
+        steps:
+            # Its npm (11.5.1 or later) supports trusted publishing
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: '24'
+            - uses: actions/download-artifact@v4
+              with:
+                  name: dist
+                  path: dist/
+            - name: Publish to npm
+              env:
+                  NAME: ${{ needs.check.outputs.name }}
+                  VERSION: ${{ needs.check.outputs.version }}
+                  PRERELEASE: ${{ needs.check.outputs.prerelease }}
+              run: |
+                  # So that re-running this workflow, if creating the release failed, doesn't fail here
+                  if npm view "$NAME@$VERSION" version > /dev/null 2> "$RUNNER_TEMP/view.log"; then
+                    echo "$NAME@$VERSION is already on npm"
+                    exit 0
+                  elif ! grep -q E404 "$RUNNER_TEMP/view.log"; then
+                    cat "$RUNNER_TEMP/view.log"
+                    exit 1
+                  fi
+                  flags=(--access public)
+                  if [ "$PRERELEASE" = "true" ]; then flags+=(--tag next); fi
+                  npm publish dist/*.tgz "${flags[@]}"
+
+    release:
+        needs: [check, publish]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  # For the tags, to find the previous release
+                  fetch-depth: 0
+                  persist-credentials: false
+            - uses: actions/download-artifact@v4
+              with:
+                  name: dist
+                  path: dist/
+            - name: Create the GitHub release and its tag
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  VERSION: ${{ needs.check.outputs.version }}
+                  PRERELEASE: ${{ needs.check.outputs.prerelease }}
+              run: |
+                  node .github/scripts/release-notes.js "$VERSION" > "$RUNNER_TEMP/notes.md"
+                  # Link to the changes since the previous release, as GitHub's generated notes do
+                  if previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA" 2> /dev/null); then
+                    printf '\n**Full Changelog**: https://github.com/%s/compare/%s...v%s\n' \
+                      "$GH_REPO" "$previous" "$VERSION" >> "$RUNNER_TEMP/notes.md"
+                  fi
+                  flags=(--target "$GITHUB_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md")
+                  if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+                  gh release create "v$VERSION" dist/* "${flags[@]}"

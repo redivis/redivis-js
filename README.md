@@ -35,7 +35,7 @@ const counts = await redivis
 npm install redivis
 ```
 
-Node.js 20 or later is required. In the browser, the library is an ES module that a bundler resolves for you, or that
+Node.js 22 or later is required. In the browser, the library is an ES module that a bundler resolves for you, or that
 can be loaded from a CDN (`https://cdn.jsdelivr.net/npm/redivis/+esm`). Type declarations are included.
 
 Public data can be read without authenticating; otherwise, the library prompts you to log in (in Node.js, or with a

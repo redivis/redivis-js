@@ -7,6 +7,7 @@ import Version from './Version.js';
 import { makeRequest, makePaginatedRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
+import { waitForVersionFinalization } from '../common/jobs.js';
 import { ValueError } from '../common/errors.js';
 import { definedValues, splitReference } from '../common/references.js';
 
@@ -213,27 +214,46 @@ export default class Dataset extends Base {
 	/**
 	 * Releases the next version of the dataset.
 	 *
-	 * @param {[options?: {releaseNotes?: string}]} args
+	 * @param {[options?: {releaseNotes?: string, waitForFinalization?: boolean, signal?: AbortSignal}]} args With
+	 *   `waitForFinalization`, wait until the release has been finalized, after which the dataset can be released,
+	 *   unreleased, or deleted again. The signal stops waiting, but doesn't cancel the release.
 	 * @returns {Promise<this>} This dataset, at the newly released version
 	 */
 	async release(...args) {
-		const { releaseNotes } = parseArgs(args, [], { allowed: ['releaseNotes'] });
-		const { datasetUri } = await makeRequest({
+		const { releaseNotes, waitForFinalization, signal } = parseArgs(args, [], {
+			defaults: { waitForFinalization: false },
+			allowed: ['releaseNotes', 'signal'],
+		});
+		const properties = await makeRequest({
 			method: 'POST',
 			path: `${this.uri}/versions/next/release`,
 			payload: { releaseNotes },
 		});
-		this.uri = datasetUri;
+		if (waitForFinalization) {
+			await waitForVersionFinalization(new Version(properties.tag, { dataset: this, properties }), { signal });
+		}
+		this.uri = properties.datasetUri;
 		return this.get();
 	}
 
 	/**
 	 * Unreleases the current version of the dataset, making it the next version again.
+	 *
+	 * @param {[options?: {waitForFinalization?: boolean, signal?: AbortSignal}]} args With `waitForFinalization`, wait
+	 *   until the unrelease has been finalized, after which the dataset can be released, unreleased, or deleted again.
+	 *   The signal stops waiting, but doesn't cancel the unrelease.
 	 * @returns {Promise<this>} This dataset, at its (now unreleased) next version
 	 */
-	async unrelease() {
-		const { datasetUri } = await makeRequest({ method: 'POST', path: `${this.uri}/versions/current/unrelease` });
-		this.uri = datasetUri;
+	async unrelease(...args) {
+		const { waitForFinalization, signal } = parseArgs(args, [], {
+			defaults: { waitForFinalization: false },
+			allowed: ['signal'],
+		});
+		const properties = await makeRequest({ method: 'POST', path: `${this.uri}/versions/current/unrelease` });
+		if (waitForFinalization) {
+			await waitForVersionFinalization(new Version(properties.tag, { dataset: this, properties }), { signal });
+		}
+		this.uri = properties.datasetUri;
 		return this.get();
 	}
 

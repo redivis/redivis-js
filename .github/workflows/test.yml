@@ -1,0 +1,44 @@
+# Runs the unit tests, and builds the type declarations, on pull requests into main, and before each release (see
+# publish.yml). The integration tests need a live Redivis environment, so run them yourself (see CONTRIBUTING.md).
+name: Unit tests
+
+on:
+    pull_request:
+        branches: [main]
+    workflow_call:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: test-${{ github.event.pull_request.number || github.run_id }}
+    cancel-in-progress: true
+
+jobs:
+    unit-tests:
+        name: ${{ matrix.os }}, Node ${{ matrix.node-version }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                # Every maintained Node version on Linux, and one on Windows and macOS for the platform-specific code (paths,
+                # config directories, file locking)
+                os: [ubuntu-latest]
+                node-version: ['22', '24', '26']
+                include:
+                    - os: windows-latest
+                      node-version: '24'
+                    - os: macos-latest
+                      node-version: '24'
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: ${{ matrix.node-version }}
+                  cache: npm
+            - run: npm ci
+            - run: npm run test:unit
+            # Fails if the JSDoc doesn't type check, which would otherwise only be caught when publishing
+            - run: npm run build:types

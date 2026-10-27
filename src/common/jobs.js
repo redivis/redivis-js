@@ -21,3 +21,13 @@ export async function waitForRun(instance, runProperties, { signal } = {}) {
 		}
 	}
 }
+
+// Waits for a version's release, unrelease, or deletion to be finalized, given the version as returned by that request.
+//   These take effect immediately, but the version's data is moved in the background, and the dataset can't be released,
+//   unreleased, or deleted again until that finishes.
+export async function waitForVersionFinalization(version, { signal } = {}) {
+	while (version.properties?.isFinalizing) {
+		await sleep(2000, signal);
+		await version.get();
+	}
+}

@@ -144,12 +144,24 @@ reads public data from redivis.com in the browser, and prints the results.
 
 ## Releases
 
-Make sure you're logged in (`npm login`) and your working tree is clean, then run:
+Describe each user-facing change under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md), in the pull request that
+makes it. The [test workflow](.github/workflows/test.yml) runs the unit tests, and builds the type declarations, on
+each pull request into `main`.
 
-```
-npm run release -- <patch|minor|major|x.y.z>
-```
+To release, bump the version with `npm version <patch|minor|major|x.y.z>`, which updates `package.json` and
+`package-lock.json` (but, per `.npmrc`, doesn't commit or tag them), and rename `## Unreleased` in CHANGELOG.md to the
+version (e.g., `## 0.4.0`), adding a new, empty `## Unreleased` section above it. Then merge that into `main`. For a
+pre-release, use a version like `0.4.0-rc.1`; it's published under npm's `next` tag, so npm only installs it when asked
+for it explicitly. Run the integration tests before releasing, too.
 
-This bumps the version in `package.json` and `package-lock.json`, commits and tags it (`release vX.Y.Z`), pushes the
-commit and tag, and publishes to npm (running the unit tests and building the type declarations first). Run the
-integration tests before releasing, too.
+On each push to `main`, the [publish workflow](.github/workflows/publish.yml) checks whether there's a `v<version>`
+tag for that version. If not, it runs the unit tests, publishes the package to npm, and then creates a GitHub release
+for the version, which also creates its tag. The release's notes are the version's section of CHANGELOG.md; if there
+isn't one, the workflow fails before publishing anything. npm trusts the workflow directly (trusted publishing), so no
+access token is needed, and each version is published with a provenance attestation. Don't create release tags
+yourself: a tag for the version means it's already been released.
+
+If the workflow fails, fix the problem and re-run it from the Actions tab. Re-running it is safe even after the
+publish to npm succeeded.
+
+To check the package locally, run `npm run build:types && npm pack --dry-run`, which lists the files it would publish.

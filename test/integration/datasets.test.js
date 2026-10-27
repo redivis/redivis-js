@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import redivis from '../../index.js';
 import Table from '../../src/classes/Table.js';
 import Version from '../../src/classes/Version.js';
-import { addData, retryWhileReleasing } from './helpers.js';
+import { addData } from './helpers.js';
 
 const { ValueError } = redivis.errors;
 
@@ -104,7 +104,8 @@ describe('datasets', { skip, concurrency: true }, () => {
 		const dataset = await createDataset(t);
 		await addData(dataset);
 
-		await dataset.release({ releaseNotes: 'First release' });
+		// The next version can't be released until this one has finished being released
+		await dataset.release({ releaseNotes: 'First release', waitForFinalization: true });
 
 		assert.equal(dataset.versionTag, 'v1_0');
 		assert.equal(dataset.properties.version.isReleased, true);
@@ -112,13 +113,14 @@ describe('datasets', { skip, concurrency: true }, () => {
 		assert.ok(version instanceof Version);
 		assert.equal(version.properties.tag, 'v1.0');
 		assert.equal(version.properties.releaseNotes, 'First release');
+		assert.equal(version.properties.isFinalizing, false);
 		assert.equal(await dataset.previousVersion(), null);
 
 		const nextVersion = await dataset.createNextVersion();
 		assert.equal(nextVersion.versionTag, 'next');
 		// A version can only be released if it changed something
 		await addData(nextVersion, 'more_data');
-		await nextVersion.release();
+		await nextVersion.release({ waitForFinalization: true });
 		const secondTag = nextVersion.properties.version.tag;
 		assert.notEqual(secondTag, 'v1.0');
 		assert.equal(nextVersion.versionTag, secondTag.replace('.', '_'));
@@ -137,18 +139,25 @@ describe('datasets', { skip, concurrency: true }, () => {
 			original.map((table) => table.name),
 			['data'],
 		);
+
+		// A historic version's data is removed in the background
+		const firstVersion = (await nextVersion.listVersions()).find((version) => version.properties.tag === 'v1.0');
+		await firstVersion.delete({ waitForFinalization: true });
+		assert.equal(firstVersion.properties.isDeleted, true);
+		assert.equal(firstVersion.properties.isFinalizing, false);
 	});
 
 	test('unrelease', async (t) => {
 		const dataset = await createDataset(t);
 		await addData(dataset);
-		await dataset.release();
-
 		// A version can't be unreleased until its release finishes
-		await retryWhileReleasing(() => dataset.unrelease());
+		await dataset.release({ waitForFinalization: true });
 
+		await dataset.unrelease({ waitForFinalization: true });
 		assert.equal(dataset.versionTag, 'next');
 		assert.equal(dataset.properties.version.isReleased, false);
+		const version = await (await dataset.version()).get();
+		assert.equal(version.properties.isFinalizing, false);
 	});
 
 	test('version update', async (t) => {

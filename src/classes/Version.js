@@ -1,6 +1,7 @@
 import Base from './Base.js';
 import { makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
+import { waitForVersionFinalization } from '../common/jobs.js';
 import { definedValues } from '../common/references.js';
 import Dataset, { normalizeVersionTag } from './Dataset.js';
 
@@ -52,10 +53,21 @@ export default class Version extends Base {
 
 	/**
 	 * Deletes the version. It can be restored with undelete().
+	 *
+	 * @param {[options?: {waitForFinalization?: boolean, signal?: AbortSignal}]} args With `waitForFinalization`, wait
+	 *   until the deletion has been finalized, after which the dataset can be released, unreleased, or deleted again. The
+	 *   signal stops waiting, but doesn't cancel the deletion.
 	 * @returns {Promise<this>}
 	 */
-	async delete() {
+	async delete(...args) {
+		const { waitForFinalization, signal } = parseArgs(args, [], {
+			defaults: { waitForFinalization: false },
+			allowed: ['signal'],
+		});
 		this._updateProperties(await makeRequest({ method: 'DELETE', path: this.uri }));
+		if (waitForFinalization) {
+			await waitForVersionFinalization(this, { signal });
+		}
 		return this;
 	}
 

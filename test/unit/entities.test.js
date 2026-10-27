@@ -96,6 +96,38 @@ test('releases and unreleases dataset versions', async () => {
 	assert.equal(dataset.uri, '/datasets/demo.ds:next');
 });
 
+test('releases and version deletions wait for finalization, when asked', async () => {
+	const version = { tag: 'v2.0', uri: '/datasets/demo.ds/versions/v2_0', datasetUri: '/datasets/demo.ds:v2_0' };
+	const requests = mockRoutes({
+		'POST /datasets/demo.ds/versions/next/release': { ...version, isFinalizing: true },
+		'GET /datasets/demo.ds/versions/v2_0': { ...version, isFinalizing: false },
+		'GET /datasets/demo.ds:v2_0': { name: 'ds', uri: '/datasets/demo.ds:v2_0', version: { tag: 'v2.0' } },
+		'DELETE /v': { tag: 'v1.0', uri: '/v', isDeleted: true, isFinalizing: true },
+		'GET /v': { tag: 'v1.0', uri: '/v', isDeleted: true, isFinalizing: false },
+	});
+	const paths = () => requests.splice(0).map(({ method, path }) => `${method} ${path}`);
+
+	await redivis.dataset('demo.ds').release({ waitForFinalization: true });
+	assert.deepEqual(paths(), [
+		'POST /datasets/demo.ds/versions/next/release',
+		'GET /datasets/demo.ds/versions/v2_0',
+		'GET /datasets/demo.ds:v2_0',
+	]);
+
+	// By default, the release returns as soon as it has been made
+	await redivis.dataset('demo.ds').release();
+	assert.deepEqual(paths(), ['POST /datasets/demo.ds/versions/next/release', 'GET /datasets/demo.ds:v2_0']);
+
+	const deleted = await new Version('v1_0', {
+		dataset: redivis.dataset('demo.ds'),
+		properties: { uri: '/v' },
+	}).delete({
+		waitForFinalization: true,
+	});
+	assert.equal(deleted.getProperty('isFinalizing'), false);
+	assert.deepEqual(paths(), ['DELETE /v', 'GET /v']);
+});
+
 test('createNextVersion() creates a next version, unless one exists', async () => {
 	let hasNextVersion = false;
 	mockRoutes({
