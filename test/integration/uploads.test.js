@@ -232,13 +232,38 @@ describe('uploads', { skip, concurrency: true }, () => {
 		assert.equal((await nextTable.get()).properties.numRows, 4);
 	});
 
-	// listRows refuses an unreleased table with several uploads, since their schemas may differ
-	test('reading a table with several unreleased uploads', { todo: 'Fixed in an upcoming API release' }, async (t) => {
+	// Uploads with the same schema are read as one response from listRows
+	test('reading a table with several unreleased uploads', async (t) => {
 		const table = await createTable(t);
 		await table.upload('first.csv').create(encode(SMALL_CSV));
 		await table.upload('second.csv').create(encode('id,name,value\n9,z,9.5\n'));
 
 		assert.deepEqual(column(await readSorted(table), 'id'), [1, 2, 3, 9]);
+	});
+
+	// listRows can't combine these into one response, so they're read through a read session, with each upload's rows
+	//   conformed to the table's variables
+	test('reading unreleased uploads with different schemas', async (t) => {
+		const table = await createTable(t);
+		await table.upload('first.csv').create(encode('id,code,extra\n1,10,x\n2,20,y\n'));
+		await table.upload('second.csv').create(encode('id,code\n3,abc\n'));
+
+		assert.deepEqual(
+			Object.fromEntries((await table.listVariables()).map(({ name, properties }) => [name, properties.type])),
+			{ id: 'integer', code: 'string', extra: 'string' },
+		);
+		const expected = [
+			{ id: 1, code: '10', extra: 'x' },
+			{ id: 2, code: '20', extra: 'y' },
+			{ id: 3, code: 'abc', extra: null },
+		];
+		assert.deepEqual(await readSorted(table), expected);
+
+		let numRows = 0;
+		for await (const batch of table.toArrowBatchIterator()) {
+			numRows += batch.numRows;
+		}
+		assert.equal(numRows, expected.length);
 	});
 
 	test('name conflicts', async (t) => {

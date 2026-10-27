@@ -14,6 +14,7 @@ import {
 	TimestampMicrosecond,
 	Utf8,
 	makeData,
+	makeVector,
 	tableFromArrays,
 	vectorFromArray,
 } from 'apache-arrow';
@@ -271,6 +272,76 @@ test('conforms streamed columns to the variable types', async () => {
 		})(),
 		/Couldn't convert the value "nope" of variable "count"/,
 	);
+});
+
+test('converts columns to strings as BigQuery casts them', async () => {
+	// E.g., a variable that's a string because its uploads disagreed on its type
+	const raw = (type, values) =>
+		makeVector(makeData({ type, length: values.length, nullCount: 0, data: BigInt64Array.from(values) }));
+	const streamed = tableFromArrays({
+		day: vectorFromArray([new Date('2020-01-02'), new Date('0001-01-01T00:00:00Z'), null], new DateDay()),
+		when: raw(new TimestampMicrosecond(), [1577934245000000n, 1577934245120000n, -1n]),
+		time: raw(new TimeMicrosecond(), [11045000000n, 11045000001n, 86399500000n]),
+		count: vectorFromArray([1n, -2n, null], new Int64()),
+		score: Float64Array.from([1, 0.5, 0.1]),
+		flag: vectorFromArray([true, false, null], new Bool()),
+	}).batches[0];
+	const tableVariables = ['day', 'when', 'time', 'count', 'score', 'flag'].map((name) => ({ name, type: 'string' }));
+	mockTable({ numRows: 3, tableVariables, rows: () => arrowResponse([streamed]) });
+
+	const result = await table().toArrowTable();
+
+	assert.deepEqual(
+		result.schema.fields.map(({ type }) => `${type}`),
+		Array(6).fill('Utf8'),
+	);
+	assert.deepEqual(result.toArray().map((row) => row.toJSON()), [
+		{ day: '2020-01-02', when: '2020-01-02 03:04:05', time: '03:04:05', count: '1', score: '1', flag: 'true' },
+		{
+			day: '0001-01-01',
+			when: '2020-01-02 03:04:05.120',
+			time: '03:04:05.000001',
+			count: '-2',
+			score: '0.5',
+			flag: 'false',
+		},
+		{ day: null, when: '1969-12-31 23:59:59.999999', time: '23:59:59.500', count: null, score: '0.1', flag: null },
+	]);
+});
+
+test('reads through a read session when listRows requires one', async () => {
+	const readSessionRequired = () =>
+		jsonResponse(
+			{ status: 400, error: 'read_session_required', error_description: 'Use a read session' },
+			{ status: 400 },
+		);
+	const streams = { s1: () => arrowResponse([batch(0, 10)], { sentinel: true }) };
+
+	let requests = mockTable({ rows: readSessionRequired, streams });
+	assert.deepEqual(ids(await table().toArrowTable()), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+	assert.deepEqual(
+		requests.map(({ path }) => path).filter((path) => /rows|readSessions|readStreams/.test(path)),
+		['/tables/demo.ds.t/rows', '/tables/demo.ds.t/readSessions', '/readStreams/s1'],
+	);
+
+	requests = mockTable({ rows: readSessionRequired, streams });
+	const batches = [];
+	for await (const batch of table().toArrowBatchIterator()) {
+		batches.push(batch);
+	}
+	assert.equal(
+		batches.reduce((count, { numRows }) => count + numRows, 0),
+		10,
+	);
+	assert.ok(requests.some(({ path }) => path.endsWith('/readSessions')));
+
+	// Other errors are raised, rather than retried
+	requests = mockTable({
+		rows: () => jsonResponse({ status: 400, error: 'invalid_request', error_description: 'No' }, { status: 400 }),
+		streams,
+	});
+	await assert.rejects(table().toArrowTable(), /No/);
+	assert.ok(!requests.some(({ path }) => path.endsWith('/readSessions')));
 });
 
 test('toRowsArray converts values to JS types', async () => {

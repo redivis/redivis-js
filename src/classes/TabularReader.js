@@ -2,7 +2,7 @@ import Base from './Base.js';
 import Export from './Export.js';
 import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
-import { NotFoundError, ValueError } from '../common/errors.js';
+import { APIError, NotFoundError, ValueError } from '../common/errors.js';
 import { getRecentDirectory, listDirectory } from '../common/files.js';
 import { isNode, requireNode } from '../common/node.js';
 import {
@@ -88,8 +88,21 @@ export default class TabularReader extends Base {
 	}
 
 	async *#iterate({ maxResults, variables, maxParallelization, batchPreprocessor, onProgress, signal }) {
-		const read = await this._prepareRead({ maxResults, variables, maxParallelization, signal });
-		yield* readBatches(read, { maxResults, batchPreprocessor, onProgress, signal });
+		const readOptions = { maxResults, variables, maxParallelization, signal };
+		try {
+			yield* readBatches(await this._prepareRead(readOptions), { maxResults, batchPreprocessor, onProgress, signal });
+		} catch (e) {
+			// Only ever raised before any rows are read
+			if (!isReadSessionRequired(e)) {
+				throw e;
+			}
+			yield* readBatches(await this._prepareRead({ ...readOptions, allowListRows: false }), {
+				maxResults,
+				batchPreprocessor,
+				onProgress,
+				signal,
+			});
+		}
 	}
 
 	/**
@@ -107,8 +120,15 @@ export default class TabularReader extends Base {
 		});
 		validateReadOptions(options);
 		const { maxResults, variables, maxParallelization, maxBytes, signal } = options;
-		const read = await this._prepareRead({ maxResults, variables, maxParallelization, maxBytes, signal });
-		return readTable(read, options);
+		const readOptions = { maxResults, variables, maxParallelization, maxBytes, signal };
+		try {
+			return await readTable(await this._prepareRead(readOptions), options);
+		} catch (e) {
+			if (!isReadSessionRequired(e)) {
+				throw e;
+			}
+			return readTable(await this._prepareRead({ ...readOptions, allowListRows: false }), options);
+		}
 	}
 
 	/**
@@ -263,10 +283,10 @@ export default class TabularReader extends Base {
 	// Determines how the rows will be read: the sources to read them from, and the variables they're conformed to
 	/**
 	 * @protected
-	 * @param {{maxResults?: number | null, variables?: string[], maxParallelization?: number, maxBytes?: number | null, signal?: AbortSignal}} options
+	 * @param {{maxResults?: number | null, variables?: string[], maxParallelization?: number, maxBytes?: number | null, signal?: AbortSignal, allowListRows?: boolean}} options
 	 * @returns {Promise<{sources: object[], mappedVariables: Record<string, any>[], totalRows?: number}>}
 	 */
-	async _prepareRead({ maxResults, variables, maxParallelization, maxBytes, signal }) {
+	async _prepareRead({ maxResults, variables, maxParallelization, maxBytes, signal, allowListRows = true }) {
 		const { numRows, numBytes, canListRows } = await this._getReadInfo();
 		const mappedVariables = await this.#getMappedVariables(variables, signal);
 		const selectedVariables = variables ? mappedVariables.map(({ name }) => name) : undefined;
@@ -282,7 +302,7 @@ export default class TabularReader extends Base {
 			throw maxBytesError(maxBytes);
 		}
 
-		if (canListRows && estimatedBytes !== undefined && estimatedBytes < LIST_ROWS_MAX_BYTES) {
+		if (allowListRows && canListRows && estimatedBytes !== undefined && estimatedBytes < LIST_ROWS_MAX_BYTES) {
 			const expectedRows =
 				numRows === undefined || numRows === null
 					? undefined
@@ -330,6 +350,13 @@ export default class TabularReader extends Base {
 			return variable;
 		});
 	}
+}
+
+
+// listRows can't always serve the rows as a single response (e.g., those of an unreleased version's uploads, when their
+//   schemas differ), in which case it tells us to read them through a read session instead
+function isReadSessionRequired(error) {
+	return error instanceof APIError && error.code === 'read_session_required';
 }
 
 /**

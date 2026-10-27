@@ -63,8 +63,9 @@ export function coerceVector(vector, targetType, variableName) {
 	const source = readValues(vector);
 
 	if (targetType.typeId === Type.Utf8) {
+		const toString = getStringConverter(vector.type);
 		return vectorFromArray(
-			source.map((value) => (value === null ? null : String(value))),
+			source.map((value) => (value === null ? null : toString(value))),
 			targetType,
 		).data[0];
 	}
@@ -124,6 +125,47 @@ function readValues(vector) {
 		}
 	}
 	return values;
+}
+
+// Converts values to strings as BigQuery casts them (e.g., when a variable's type was relaxed to string because its
+//   uploads disagreed), rather than as the epoch numbers that arrow-js reads temporal values as
+function getStringConverter(sourceType) {
+	switch (sourceType.typeId) {
+		case Type.Date:
+			return (value) => formatDateTime(toMicros(value, sourceType), { includeTime: false });
+		case Type.Timestamp:
+			return (value) => formatDateTime(toMicros(value, sourceType), { includeTime: true });
+		case Type.Time:
+			return (value) => formatTime(toTimeMicros(value, sourceType));
+		default:
+			return String;
+	}
+}
+
+// Formats microseconds since the epoch as "2020-01-02" or "2020-01-02 03:04:05[.fraction]"
+function formatDateTime(micros, { includeTime }) {
+	const days = floorDiv(micros, MICROS_PER_DAY);
+	const date = new Date(Number(days) * 86_400_000);
+	const formattedDate = `${String(date.getUTCFullYear()).padStart(4, '0')}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+	return includeTime ? `${formattedDate} ${formatTime(micros - days * MICROS_PER_DAY)}` : formattedDate;
+}
+
+// Formats microseconds since midnight as "03:04:05", with any fraction of a second in milliseconds if that's exact,
+//   or else microseconds (".500", ".123456")
+function formatTime(micros) {
+	const seconds = micros / 1_000_000n;
+	const fraction = micros % 1_000_000n;
+	const formatted = `${pad(seconds / 3600n)}:${pad((seconds / 60n) % 60n)}:${pad(seconds % 60n)}`;
+	if (!fraction) {
+		return formatted;
+	}
+	return fraction % 1000n
+		? `${formatted}.${String(fraction).padStart(6, '0')}`
+		: `${formatted}.${String(fraction / 1000n).padStart(3, '0')}`;
+}
+
+function pad(value) {
+	return String(value).padStart(2, '0');
 }
 
 function getConverter(targetType, sourceType) {
