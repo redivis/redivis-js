@@ -1,15 +1,17 @@
 import { jsonResponse, mockFetch } from './helpers.js';
 import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import redivis from '../../index.js';
 import { APIError } from '../../src/common/errors.js';
+import { getAuthToken } from '../../src/common/auth.js';
 
 // Credentials are cached in their own directory, rather than the helpers' API token being used
 const configDir = await mkdtemp(join(tmpdir(), 'redivis-auth-test-'));
-const credentialsFile = join(configDir, 'js_credentials');
+// The helpers' API endpoint is https://redivis.test/api/v1
+const credentialsFile = join(configDir, 'environments', 'redivis.test', 'js_credentials');
 process.env.REDIVIS_CONFIG_DIR = configDir;
 delete process.env.REDIVIS_API_TOKEN;
 
@@ -22,8 +24,9 @@ beforeEach(async () => {
 
 const inAnHour = () => Date.now() / 1000 + 3600;
 
-async function cacheCredentials(credentials) {
-	await writeFile(credentialsFile, JSON.stringify({ refresh_token: 'refresh-1', ...credentials }));
+async function cacheCredentials(credentials, file = credentialsFile) {
+	await mkdir(dirname(file), { recursive: true });
+	await writeFile(file, JSON.stringify({ refresh_token: 'refresh-1', ...credentials }));
 }
 
 // Mocks the API, which responds to requests authorized with `validToken`, and the OAuth server, which issues
@@ -157,6 +160,46 @@ test('deauthorize() deletes the cached credentials', async () => {
 
 	assert.equal(await redivis.isAuthorized(), false);
 	await assert.rejects(stat(credentialsFile), { code: 'ENOENT' });
+});
+
+test('each API endpoint has its own credentials', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: inAnHour() });
+	assert.equal(await redivis.isAuthorized(), true);
+
+	try {
+		redivis.config({ apiEndpoint: 'http://localhost:8080/api/v1' });
+		assert.equal(await redivis.isAuthorized(), false);
+		await cacheCredentials(
+			{ access_token: 'access-local', expires_at: inAnHour() },
+			join(configDir, 'environments', 'localhost_8080', 'js_credentials'),
+		);
+		assert.equal(await getAuthToken(), 'access-local');
+	} finally {
+		redivis.config({ apiEndpoint: null });
+	}
+	assert.equal(await getAuthToken(), 'access-1');
+});
+
+test('credentials from before they were stored per environment are moved to redivis.com', async () => {
+	const legacyCredentialsFile = join(configDir, 'js_credentials');
+	const redivisCredentialsFile = join(configDir, 'environments', 'redivis.com', 'js_credentials');
+	try {
+		redivis.config({ apiEndpoint: 'https://redivis.com/api/v1' });
+		await cacheCredentials({ access_token: 'access-legacy', expires_at: inAnHour() }, legacyCredentialsFile);
+
+		assert.equal(await getAuthToken(), 'access-legacy');
+		await assert.rejects(stat(legacyCredentialsFile), { code: 'ENOENT' });
+		assert.equal(JSON.parse(await readFile(redivisCredentialsFile, 'utf8')).access_token, 'access-legacy');
+
+		// And they're deleted when logging out, before they've been moved
+		await redivis.deauthorize();
+		await cacheCredentials({ access_token: 'access-legacy', expires_at: inAnHour() }, legacyCredentialsFile);
+		await redivis.deauthorize();
+		assert.equal(await redivis.isAuthorized(), false);
+		await assert.rejects(stat(legacyCredentialsFile), { code: 'ENOENT' });
+	} finally {
+		redivis.config({ apiEndpoint: null });
+	}
 });
 
 // Last, since a proxy can't be unset

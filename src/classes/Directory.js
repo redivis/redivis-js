@@ -17,7 +17,7 @@ import { getConfigValue } from '../common/config.js';
  * @typedef {object} DirectoryDownloadOptions
  * @property {number} [maxResults] The maximum number of files to download
  * @property {boolean} [overwrite=false] Replace existing files with different contents
- * @property {number} [maxConcurrency=32] The number of files to download at once
+ * @property {number} [maxParallelization=32] The number of files to download at once
  * @property {(progress: {bytesDownloaded: number, totalBytes: number, filesDownloaded: number, totalFiles: number}) => void} [onProgress]
  * @property {AbortSignal} [signal]
  */
@@ -133,8 +133,8 @@ export default class Directory {
 	 * @returns {Promise<string[]>} The paths of the downloaded files
 	 */
 	async download(...args) {
-		const { path, maxResults, overwrite, maxConcurrency, onProgress, signal } = parseArgs(args, ['path'], {
-			defaults: { overwrite: false, maxConcurrency: getConfigValue('maxParallelization') ?? 32 },
+		const { path, maxResults, overwrite, maxParallelization, onProgress, signal } = parseArgs(args, ['path'], {
+			defaults: { overwrite: false, maxParallelization: getConfigValue('maxParallelization') ?? 32 },
 			allowed: ['maxResults', 'onProgress', 'signal'],
 		});
 		const files = this.list(maxResults, { mode: 'files', recursive: true });
@@ -150,7 +150,7 @@ export default class Directory {
 				path,
 				defaultDirectoryName: this.name || this.table?.name || 'files',
 				overwrite,
-				maxConcurrency,
+				maxParallelization,
 				onProgress,
 				signal,
 			},

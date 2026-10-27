@@ -38,7 +38,7 @@ export function expandHome(path, os) {
  */
 export async function downloadFiles(
 	files,
-	{ path, defaultDirectoryName, overwrite, maxConcurrency, onProgress, signal },
+	{ path, defaultDirectoryName, overwrite, maxParallelization, onProgress, signal },
 ) {
 	requireNode('Downloading files');
 	const [nodePath, os, { mkdir, stat }] = await Promise.all([
@@ -62,7 +62,7 @@ export async function downloadFiles(
 
 	return mapConcurrent(
 		files,
-		maxConcurrency,
+		maxParallelization,
 		async ({ relativePath, ...file }) => {
 			const filePath = nodePath.join(directory, ...relativePath.split('/'));
 			if (!filePath.startsWith(directory + nodePath.sep)) {

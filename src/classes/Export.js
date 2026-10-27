@@ -63,8 +63,8 @@ export default class Export extends Base {
 	 * @returns {Promise<string[]>} The paths of the downloaded files
 	 */
 	async downloadFiles(...args) {
-		let { path, overwrite, maxConcurrency, onProgress, signal } = parseArgs(args, ['path'], {
-			defaults: { overwrite: false, maxConcurrency: getConfigValue('maxParallelization') ?? 16 },
+		let { path, overwrite, maxParallelization, onProgress, signal } = parseArgs(args, ['path'], {
+			defaults: { overwrite: false, maxParallelization: getConfigValue('maxParallelization') ?? 16 },
 			allowed: ['onProgress', 'signal'],
 		});
 		requireNode('Downloading files');
@@ -81,7 +81,7 @@ export default class Export extends Base {
 		}));
 		const options = {
 			overwrite,
-			maxConcurrency,
+			maxParallelization,
 			signal,
 			onProgress: (progress) => onProgress?.({ stage: 'downloading', ...progress }),
 		};

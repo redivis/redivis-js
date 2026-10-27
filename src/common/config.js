@@ -30,8 +30,8 @@ const overrides = {};
  *   when there's no default user
  * @param {string|null} [options.apiEndpoint] Base URL of the Redivis API. Defaults to `https://redivis.com/api/v1`
  * @param {string|null} [options.configDir] Directory where credentials are cached, in Node. Defaults to `~/.redivis`
- * @param {number|null} [options.maxParallelization] Default for the `maxParallelization` and `maxConcurrency` options
- *   of methods that read, upload, or download in parallel. Each method has its own default when this isn't set
+ * @param {number|null} [options.maxParallelization] Default for the `maxParallelization` option of methods that read,
+ *   upload, or download data in parallel. Each method has its own default when this isn't set
  * @returns {{defaultWorkflow?: string, defaultDataset?: string, defaultUser?: string, defaultOrganization?: string,
  *   apiEndpoint: string, configDir?: string, maxParallelization?: number}}
  */

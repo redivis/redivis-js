@@ -498,11 +498,35 @@ async function getCredentialsPaths() {
 	// Overridable for environments where the home directory isn't writable, or is shared between users
 	const configDir = getConfigValue('configDir')?.replace(/^~(?=$|[\\/])/, os.homedir());
 	const redivisDir = path.resolve(configDir || path.join(os.homedir(), '.redivis'));
-	return { redivisDir, credentialsFile: path.join(redivisDir, 'js_credentials') };
+	// Credentials are only valid for the environment that issued them, so each API endpoint's host (e.g.
+	//   `redivis.com`, or `localhost_8080`) has its own. The Python and R clients name these directories the same way.
+	const host = new URL(getApiEndpoint()).host.replace(/[^\w.-]/g, '_');
+	const credentialsDir = path.join(redivisDir, 'environments', host);
+	return {
+		credentialsDir,
+		credentialsFile: path.join(credentialsDir, 'js_credentials'),
+		// Credentials used to be stored directly in the config directory. They were almost always for redivis.com,
+		//   so they're moved there.
+		legacyCredentialsFile: host === 'redivis.com' ? path.join(redivisDir, 'js_credentials') : null,
+	};
+}
+
+async function migrateLegacyCredentials({ credentialsDir, credentialsFile, legacyCredentialsFile }) {
+	if (!legacyCredentialsFile) {
+		return;
+	}
+	const { mkdir, rename } = await importNodeModule('fs/promises');
+	try {
+		await mkdir(credentialsDir, { recursive: true, mode: 0o700 });
+		await rename(legacyCredentialsFile, credentialsFile);
+	} catch (e) {
+		// ignore, e.g. there are no legacy credentials
+	}
 }
 
 async function loadCachedCredentials() {
-	const credentialsFile = isNode ? (await getCredentialsPaths()).credentialsFile : undefined;
+	const credentialsPaths = isNode ? await getCredentialsPaths() : undefined;
+	const credentialsFile = credentialsPaths?.credentialsFile;
 	// When there are no credentials, check again each time, in case another process has since logged in
 	if (cachedCredentials && credentialsFile === cachedCredentialsFile) {
 		return cachedCredentials;
@@ -511,7 +535,10 @@ async function loadCachedCredentials() {
 	let credentials = null;
 	try {
 		if (isNode) {
-			const { readFile } = await importNodeModule('fs/promises');
+			const { readFile, stat } = await importNodeModule('fs/promises');
+			if (!(await stat(credentialsFile).catch(() => null))) {
+				await migrateLegacyCredentials(credentialsPaths);
+			}
 			credentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
 		} else {
 			credentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
@@ -542,13 +569,13 @@ async function writeCachedCredentials(credentials) {
 
 	const { mkdir, open, rename, rm } = await importNodeModule('fs/promises');
 	const path = await importNodeModule('path');
-	const { redivisDir, credentialsFile } = await getCredentialsPaths();
+	const { credentialsDir, credentialsFile } = await getCredentialsPaths();
 	cachedCredentialsFile = credentialsFile;
 	// The file holds a refresh token, so keep it private to this user
-	await mkdir(redivisDir, { recursive: true, mode: 0o700 });
+	await mkdir(credentialsDir, { recursive: true, mode: 0o700 });
 	// Write a temporary file and swap it into place, so that another process never reads a partially written file.
 	//   It's created readable only by this user, so the token is never exposed to others, even briefly.
-	const tempPath = path.join(redivisDir, `.js_credentials.${generateRandomString()}`);
+	const tempPath = path.join(credentialsDir, `.js_credentials.${generateRandomString()}`);
 	const handle = await open(tempPath, 'wx', 0o600);
 	try {
 		await handle.writeFile(JSON.stringify(credentials, null, 2));
@@ -566,8 +593,12 @@ async function clearCachedCredentials() {
 	cachedCredentials = null;
 	if (isNode) {
 		const { rm } = await importNodeModule('fs/promises');
-		const { credentialsFile } = await getCredentialsPaths();
+		const { credentialsFile, legacyCredentialsFile } = await getCredentialsPaths();
 		await rm(credentialsFile, { force: true });
+		// Otherwise they'd be moved into place the next time credentials are loaded
+		if (legacyCredentialsFile) {
+			await rm(legacyCredentialsFile, { force: true });
+		}
 	} else {
 		try {
 			sessionStorage.removeItem(browserStorageKey);

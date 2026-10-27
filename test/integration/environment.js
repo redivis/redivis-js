@@ -1,7 +1,6 @@
 // Which Redivis environment the integration tests run against, and the settings that control them. Everything is
 //   configured through environment variables, since node's test runner doesn't take custom command-line options.
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 // Named environments that REDIVIS_TEST_ENV accepts, in addition to the URL of an API, with defaults for the settings
 //   below. The dev environment's user accounts are limited to 50 datasets, so tests create theirs in an organization.
@@ -40,7 +39,7 @@ export function getSettings() {
 		organization: process.env.REDIVIS_TEST_ORGANIZATION || defaults.organization,
 		keepResources: isTruthy(process.env.REDIVIS_TEST_KEEP_RESOURCES),
 		runSlow: isTruthy(process.env.REDIVIS_TEST_SLOW),
-		configDir: credentialsDirFor(defaults.apiEndpoint),
+		configDir: getConfigDir(),
 	};
 }
 
@@ -58,15 +57,10 @@ function resolveEnvironment(environment) {
 	);
 }
 
-// The client keeps a single set of credentials, whichever environment they're for. Pointing it at another environment
-//   means its refresh token gets rejected there, at which point the client deletes the credentials. So each
-//   environment's are kept apart (alongside those of the other clients' tests), and never touch the developer's own.
-function credentialsDirFor(apiEndpoint) {
-	if (process.env.REDIVIS_TEST_CONFIG_DIR) {
-		return process.env.REDIVIS_TEST_CONFIG_DIR.replace(/^~(?=$|[\\/])/, homedir());
-	}
-	const host = new URL(apiEndpoint).host.replace(/[^\w.-]/g, '_');
-	return join(homedir(), '.redivis', 'environments', host);
+// The client keeps each environment's credentials apart, in ~/.redivis/environments/<host>/, so they're only moved
+//   elsewhere when asked to
+function getConfigDir() {
+	return process.env.REDIVIS_TEST_CONFIG_DIR?.replace(/^~(?=$|[\\/])/, homedir());
 }
 
 function isTruthy(value) {
@@ -79,7 +73,11 @@ function isTruthy(value) {
  */
 export function applySettings(settings = getSettings()) {
 	process.env.REDIVIS_API_ENDPOINT = settings.apiEndpoint;
-	process.env.REDIVIS_CONFIG_DIR = settings.configDir;
+	if (settings.configDir) {
+		process.env.REDIVIS_CONFIG_DIR = settings.configDir;
+	} else {
+		delete process.env.REDIVIS_CONFIG_DIR;
+	}
 	for (const variable of AMBIENT_VARIABLES) {
 		delete process.env[variable];
 	}
