@@ -59,9 +59,10 @@ The named environments, and their defaults for the settings below, are defined b
 [`test/integration/environment.js`](test/integration/environment.js); add an entry there to name a new one. If an
 environment's API can't be reached, its integration tests are skipped (and reported as such).
 
-Node's `fetch` must trust the environment's TLS certificate. If it's signed by a local certificate authority that
-Node doesn't know about, point `NODE_EXTRA_CA_CERTS` at the authority's certificate (or run Node with
-`--use-system-ca`, if it's in your system's trust store).
+Node's `fetch` must trust the environment's TLS certificate. `npm run test:integration` runs Node with
+`--use-system-ca`, so a certificate that your system trusts (e.g., one added to the macOS keychain, as the Python and
+R clients also need) works as is. Otherwise, point `NODE_EXTRA_CA_CERTS` at the certificate, or at the authority that
+signed it. When running a test file with `node --test` directly, pass `--use-system-ca` yourself.
 
 #### Authenticating
 

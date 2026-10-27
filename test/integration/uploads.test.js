@@ -418,21 +418,26 @@ describe('uploads', { skip, concurrency: true }, () => {
 		assert.equal(rows[0].when.toString(), '2020-01-01T00:00:00');
 	});
 
-	// The client sends BigInts exactly (see the unit tests), but the API parses the request as JSON, rounding them
-	test(
-		'a stream upload keeps large integers exact',
-		{ todo: 'POST /uploads/:upload/rows rounds large integers' },
-		async (t) => {
-			const table = await createTable(t);
-			const upload = await table
-				.upload('stream')
-				.create({ type: 'stream', schema: [{ name: 'id', type: 'integer' }] });
+	test('a stream upload keeps large integers exact', async (t) => {
+		const table = await createTable(t);
+		const upload = await table
+			.upload('stream')
+			.create({ type: 'stream', schema: [{ name: 'id', type: 'integer' }] });
 
-			await upload.insertRows([{ id: 9007199254740993n }]);
+		await upload.insertRows([{ id: 9007199254740993n }]);
 
-			assert.deepEqual(await upload.toRowsArray({ bigInt: true }), [{ id: 9007199254740993n }]);
-		},
-	);
+		assert.deepEqual(await upload.toRowsArray({ bigInt: true }), [{ id: 9007199254740993n }]);
+	});
+
+	test('a stream upload without a schema infers large integers as integers', async (t) => {
+		const table = await createTable(t);
+		const upload = await table.upload('stream').create({ type: 'stream' });
+
+		await upload.insertRows([{ id: 9007199254740993n }, { id: 1 }]);
+
+		assert.equal((await upload.variable('id').get()).type, 'integer');
+		assert.deepEqual(column(sortedBy(await upload.toRowsArray({ bigInt: true })), 'id'), [1n, 9007199254740993n]);
+	});
 
 	test('insertRows requires an array', async (t) => {
 		const table = await createTable(t);

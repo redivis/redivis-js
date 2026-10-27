@@ -15,7 +15,7 @@
 	"scripts": {
 		"test": "npm run test:unit && npm run test:integration",
 		"test:unit": "cd test/unit && node --test",
-		"test:integration": "cd test/integration && node --test --test-global-setup=setup.js --test-timeout=900000",
+		"test:integration": "cd test/integration && node --use-system-ca --test --test-global-setup=setup.js --test-timeout=900000",
 		"test:coverage": "cd test/unit && node --test --experimental-test-coverage --test-coverage-exclude='**/test/**' --test-coverage-exclude='**/node_modules/**'",
 		"test:browser": "(sleep 1 && open http://127.0.0.1:9000/test/browser) & python3 -m http.server 9000",
 		"build:types": "tsc -p tsconfig.json",
