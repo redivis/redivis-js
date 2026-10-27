@@ -498,35 +498,16 @@ async function getCredentialsPaths() {
 	// Overridable for environments where the home directory isn't writable, or is shared between users
 	const configDir = getConfigValue('configDir')?.replace(/^~(?=$|[\\/])/, os.homedir());
 	const redivisDir = path.resolve(configDir || path.join(os.homedir(), '.redivis'));
-	// Credentials are only valid for the environment that issued them, so each API endpoint's host (e.g.
-	//   `redivis.com`, or `localhost_8080`) has its own. The Python and R clients name these directories the same way.
+	// Credentials are only valid for the environment that issued them. Those for redivis.com are kept directly in the
+	//   config directory, and any other API endpoint's host (e.g. `localhost_8080`) has its own subdirectory. The
+	//   Python and R clients name these directories the same way.
 	const host = new URL(getApiEndpoint()).host.replace(/[^\w.-]/g, '_');
-	const credentialsDir = path.join(redivisDir, 'environments', host);
-	return {
-		credentialsDir,
-		credentialsFile: path.join(credentialsDir, 'js_credentials'),
-		// Credentials used to be stored directly in the config directory. They were almost always for redivis.com,
-		//   so they're moved there.
-		legacyCredentialsFile: host === 'redivis.com' ? path.join(redivisDir, 'js_credentials') : null,
-	};
-}
-
-async function migrateLegacyCredentials({ credentialsDir, credentialsFile, legacyCredentialsFile }) {
-	if (!legacyCredentialsFile) {
-		return;
-	}
-	const { mkdir, rename } = await importNodeModule('fs/promises');
-	try {
-		await mkdir(credentialsDir, { recursive: true, mode: 0o700 });
-		await rename(legacyCredentialsFile, credentialsFile);
-	} catch (e) {
-		// ignore, e.g. there are no legacy credentials
-	}
+	const credentialsDir = host === 'redivis.com' ? redivisDir : path.join(redivisDir, 'environments', host);
+	return { credentialsDir, credentialsFile: path.join(credentialsDir, 'js_credentials') };
 }
 
 async function loadCachedCredentials() {
-	const credentialsPaths = isNode ? await getCredentialsPaths() : undefined;
-	const credentialsFile = credentialsPaths?.credentialsFile;
+	const credentialsFile = isNode ? (await getCredentialsPaths()).credentialsFile : undefined;
 	// When there are no credentials, check again each time, in case another process has since logged in
 	if (cachedCredentials && credentialsFile === cachedCredentialsFile) {
 		return cachedCredentials;
@@ -535,10 +516,7 @@ async function loadCachedCredentials() {
 	let credentials = null;
 	try {
 		if (isNode) {
-			const { readFile, stat } = await importNodeModule('fs/promises');
-			if (!(await stat(credentialsFile).catch(() => null))) {
-				await migrateLegacyCredentials(credentialsPaths);
-			}
+			const { readFile } = await importNodeModule('fs/promises');
 			credentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
 		} else {
 			credentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
@@ -593,12 +571,8 @@ async function clearCachedCredentials() {
 	cachedCredentials = null;
 	if (isNode) {
 		const { rm } = await importNodeModule('fs/promises');
-		const { credentialsFile, legacyCredentialsFile } = await getCredentialsPaths();
+		const { credentialsFile } = await getCredentialsPaths();
 		await rm(credentialsFile, { force: true });
-		// Otherwise they'd be moved into place the next time credentials are loaded
-		if (legacyCredentialsFile) {
-			await rm(legacyCredentialsFile, { force: true });
-		}
 	} else {
 		try {
 			sessionStorage.removeItem(browserStorageKey);

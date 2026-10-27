@@ -42,7 +42,7 @@ export async function globalSetup() {
 	run.owner = { name: owner.name, kind: owner.properties.kind };
 	console.log(
 		`Testing against ${settings.apiEndpoint} as ${user.name}, creating datasets named ${run.runId}_* in ${owner.name}` +
-			(settings.configDir ? ` (credentials in ${settings.configDir})` : ''),
+			` (credentials in ${settings.configDir})`,
 	);
 
 	await deleteStaleResources(owner);

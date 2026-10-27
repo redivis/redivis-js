@@ -66,8 +66,9 @@ Node doesn't know about, point `NODE_EXTRA_CA_CERTS` at the authority's certific
 #### Authenticating
 
 The first time you run the integration tests against an environment, the client opens a browser to log in to it, as
-it would for any user. The client keeps each environment's credentials apart, in `~/.redivis/environments/<host>/`, so
-the test environment's never touch your credentials for redivis.com. Set `REDIVIS_TEST_CONFIG_DIR` to keep them
+it would for any user. The tests use their own config directory, `~/.redivis/test`, so that their credentials never
+touch your own, even when testing against redivis.com. Within it, each environment's credentials are kept apart (e.g.,
+the dev environment's in `~/.redivis/test/environments/local.host_8443/`). Set `REDIVIS_TEST_CONFIG_DIR` to keep them
 somewhere else.
 
 For a non-interactive run (e.g., in CI, where `CI` is set and the tests fail rather than wait for a login), provide an
@@ -111,7 +112,7 @@ an interrupted run are deleted by a later run once they're 12 hours old.
 | `REDIVIS_TEST_ORGANIZATION`   | An organization the test user belongs to, for the organization tests. Defaults to the environment's default (`demo` for dev); the tests are skipped without one.                                       |
 | `REDIVIS_TEST_KEEP_RESOURCES` | Don't delete the datasets the tests create.                                                                                                                                                            |
 | `REDIVIS_TEST_SLOW`           | Also run the slow tests, such as a large upload from a file.                                                                                                                                           |
-| `REDIVIS_TEST_CONFIG_DIR`     | The config directory to use, which holds the test environment's credentials. Defaults to `~/.redivis`.                                                                                                 |
+| `REDIVIS_TEST_CONFIG_DIR`     | The config directory to use, which holds the test environment's credentials. Defaults to `~/.redivis/test`.                                                                                            |
 
 The tests also unset any `REDIVIS_DEFAULT_*` variables in your environment, so that they run the same everywhere.
 

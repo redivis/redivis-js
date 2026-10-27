@@ -1,6 +1,7 @@
 // Which Redivis environment the integration tests run against, and the settings that control them. Everything is
 //   configured through environment variables, since node's test runner doesn't take custom command-line options.
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 // Named environments that REDIVIS_TEST_ENV accepts, in addition to the URL of an API, with defaults for the settings
 //   below. The dev environment's user accounts are limited to 50 datasets, so tests create theirs in an organization.
@@ -57,10 +58,13 @@ function resolveEnvironment(environment) {
 	);
 }
 
-// The client keeps each environment's credentials apart, in ~/.redivis/environments/<host>/, so they're only moved
-//   elsewhere when asked to
+// The tests' credentials are kept apart from the developer's own, even for redivis.com. Within it, the client keeps
+//   each environment's apart (e.g., the dev environment's in ~/.redivis/test/environments/local.host_8443/).
 function getConfigDir() {
-	return process.env.REDIVIS_TEST_CONFIG_DIR?.replace(/^~(?=$|[\\/])/, homedir());
+	return (process.env.REDIVIS_TEST_CONFIG_DIR || join(homedir(), '.redivis', 'test')).replace(
+		/^~(?=$|[\\/])/,
+		homedir(),
+	);
 }
 
 function isTruthy(value) {
@@ -73,11 +77,7 @@ function isTruthy(value) {
  */
 export function applySettings(settings = getSettings()) {
 	process.env.REDIVIS_API_ENDPOINT = settings.apiEndpoint;
-	if (settings.configDir) {
-		process.env.REDIVIS_CONFIG_DIR = settings.configDir;
-	} else {
-		delete process.env.REDIVIS_CONFIG_DIR;
-	}
+	process.env.REDIVIS_CONFIG_DIR = settings.configDir;
 	for (const variable of AMBIENT_VARIABLES) {
 		delete process.env[variable];
 	}

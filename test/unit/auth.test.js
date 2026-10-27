@@ -180,23 +180,17 @@ test('each API endpoint has its own credentials', async () => {
 	assert.equal(await getAuthToken(), 'access-1');
 });
 
-test('credentials from before they were stored per environment are moved to redivis.com', async () => {
-	const legacyCredentialsFile = join(configDir, 'js_credentials');
-	const redivisCredentialsFile = join(configDir, 'environments', 'redivis.com', 'js_credentials');
+test("redivis.com's credentials are kept directly in the config directory", async () => {
 	try {
 		redivis.config({ apiEndpoint: 'https://redivis.com/api/v1' });
-		await cacheCredentials({ access_token: 'access-legacy', expires_at: inAnHour() }, legacyCredentialsFile);
+		await cacheCredentials(
+			{ access_token: 'access-redivis', expires_at: inAnHour() },
+			join(configDir, 'js_credentials'),
+		);
+		assert.equal(await getAuthToken(), 'access-redivis');
 
-		assert.equal(await getAuthToken(), 'access-legacy');
-		await assert.rejects(stat(legacyCredentialsFile), { code: 'ENOENT' });
-		assert.equal(JSON.parse(await readFile(redivisCredentialsFile, 'utf8')).access_token, 'access-legacy');
-
-		// And they're deleted when logging out, before they've been moved
 		await redivis.deauthorize();
-		await cacheCredentials({ access_token: 'access-legacy', expires_at: inAnHour() }, legacyCredentialsFile);
-		await redivis.deauthorize();
-		assert.equal(await redivis.isAuthorized(), false);
-		await assert.rejects(stat(legacyCredentialsFile), { code: 'ENOENT' });
+		await assert.rejects(stat(join(configDir, 'js_credentials')), { code: 'ENOENT' });
 	} finally {
 		redivis.config({ apiEndpoint: null });
 	}
