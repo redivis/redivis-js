@@ -1,5 +1,6 @@
 import { showSignInPrompt } from './signInPrompt.js';
 import { isNode, getEnv, importNodeModule } from './node.js';
+import { getConfigValue } from './config.js';
 
 // Node mirrors the Python client: an offline (refresh token) login via the device flow, cached on disk. In the
 //   browser the library can run on any site, so it only ever holds a short-lived, read-only token for the tab.
@@ -10,6 +11,8 @@ const browserStorageKey = 'redivis_oauth_token';
 
 // undefined until first loaded; null when there are no cached credentials
 let cachedCredentials;
+// The file that cachedCredentials were loaded from (in Node), which changes when config({configDir}) does
+let cachedCredentialsFile;
 // Incremented whenever the credentials are written or cleared
 let credentialsGeneration = 0;
 let apiToken;
@@ -18,7 +21,7 @@ let authLock = Promise.resolve();
 let popupWindowReference;
 
 function getApiEndpoint() {
-	return getEnv('REDIVIS_API_ENDPOINT') || 'https://redivis.com/api/v1';
+	return getConfigValue('apiEndpoint');
 }
 
 // Note that https is optional, since traffic can happen over http if all in the same cluster
@@ -493,14 +496,15 @@ async function getCredentialsPaths() {
 	const os = await importNodeModule('os');
 	const path = await importNodeModule('path');
 	// Overridable for environments where the home directory isn't writable, or is shared between users
-	const configDir = getEnv('REDIVIS_CONFIG_DIR')?.replace(/^~(?=$|[\\/])/, os.homedir());
+	const configDir = getConfigValue('configDir')?.replace(/^~(?=$|[\\/])/, os.homedir());
 	const redivisDir = path.resolve(configDir || path.join(os.homedir(), '.redivis'));
 	return { redivisDir, credentialsFile: path.join(redivisDir, 'js_credentials') };
 }
 
 async function loadCachedCredentials() {
+	const credentialsFile = isNode ? (await getCredentialsPaths()).credentialsFile : undefined;
 	// When there are no credentials, check again each time, in case another process has since logged in
-	if (cachedCredentials) {
+	if (cachedCredentials && credentialsFile === cachedCredentialsFile) {
 		return cachedCredentials;
 	}
 	const generation = credentialsGeneration;
@@ -508,7 +512,6 @@ async function loadCachedCredentials() {
 	try {
 		if (isNode) {
 			const { readFile } = await importNodeModule('fs/promises');
-			const { credentialsFile } = await getCredentialsPaths();
 			credentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
 		} else {
 			credentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
@@ -520,6 +523,7 @@ async function loadCachedCredentials() {
 	//   request refreshed them
 	if (generation === credentialsGeneration) {
 		cachedCredentials = credentials;
+		cachedCredentialsFile = credentialsFile;
 	}
 	return cachedCredentials || null;
 }
@@ -539,6 +543,7 @@ async function writeCachedCredentials(credentials) {
 	const { mkdir, open, rename, rm } = await importNodeModule('fs/promises');
 	const path = await importNodeModule('path');
 	const { redivisDir, credentialsFile } = await getCredentialsPaths();
+	cachedCredentialsFile = credentialsFile;
 	// The file holds a refresh token, so keep it private to this user
 	await mkdir(redivisDir, { recursive: true, mode: 0o700 });
 	// Write a temporary file and swap it into place, so that another process never reads a partially written file.

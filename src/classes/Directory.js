@@ -2,6 +2,7 @@ import File from './File.js';
 import { parseArgs } from '../common/args.js';
 import { ValueError } from '../common/errors.js';
 import { downloadFiles } from '../common/download.js';
+import { getConfigValue } from '../common/config.js';
 
 /** @typedef {import('./Table.js').default} Table */
 /** @typedef {import('./Query.js').default} Query */
@@ -133,7 +134,7 @@ export default class Directory {
 	 */
 	async download(...args) {
 		const { path, maxResults, overwrite, maxConcurrency, onProgress, signal } = parseArgs(args, ['path'], {
-			defaults: { overwrite: false, maxConcurrency: 32 },
+			defaults: { overwrite: false, maxConcurrency: getConfigValue('maxParallelization') ?? 32 },
 			allowed: ['maxResults', 'onProgress', 'signal'],
 		});
 		const files = this.list(maxResults, { mode: 'files', recursive: true });

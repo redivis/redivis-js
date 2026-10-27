@@ -3,6 +3,7 @@ import { makeRequest, sleep } from './apiRequest.js';
 import { coerceVector, makeNullData, typesEqual, variablesToSchema } from './arrowTypes.js';
 import { APIError, NetworkError, ValueError } from './errors.js';
 import { isNode } from './node.js';
+import { getConfigValue } from './config.js';
 
 // Read sessions are parallelized across at most this many streams
 export const MAX_PARALLELIZATION = 8;
@@ -14,7 +15,10 @@ export const DEFAULT_BROWSER_MAX_BYTES = 1e8;
 const MAX_RETRIES = 10;
 
 export function getDefaultParallelization() {
-	return Math.min(MAX_PARALLELIZATION, globalThis.navigator?.hardwareConcurrency || 4);
+	return (
+		getConfigValue('maxParallelization') ??
+		Math.min(MAX_PARALLELIZATION, globalThis.navigator?.hardwareConcurrency || 4)
+	);
 }
 
 // A stream that can be resumed from a row offset, and terminates with an empty end-of-stream sentinel batch

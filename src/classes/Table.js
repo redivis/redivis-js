@@ -196,7 +196,11 @@ export default class Table extends TabularReader {
 	 */
 	async addFiles(...args) {
 		const { files, directory, maxParallelization, onProgress, signal } = parseArgs(args, [], {
-			defaults: { maxParallelization: Math.min(100, (globalThis.navigator?.hardwareConcurrency || 4) * 5) },
+			defaults: {
+				maxParallelization:
+					getConfigValue('maxParallelization') ??
+					Math.min(100, (globalThis.navigator?.hardwareConcurrency || 4) * 5),
+			},
 			allowed: ['files', 'directory', 'onProgress', 'signal'],
 		});
 		const resolvedFiles = await resolveFiles({ files, directory });

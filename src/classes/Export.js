@@ -3,6 +3,7 @@ import { sleep } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { JobError, ValueError } from '../common/errors.js';
 import { downloadFiles, expandHome } from '../common/download.js';
+import { getConfigValue } from '../common/config.js';
 import { importNodeModule, requireNode } from '../common/node.js';
 
 export default class Export extends Base {
@@ -63,7 +64,7 @@ export default class Export extends Base {
 	 */
 	async downloadFiles(...args) {
 		let { path, overwrite, maxConcurrency, onProgress, signal } = parseArgs(args, ['path'], {
-			defaults: { overwrite: false, maxConcurrency: 16 },
+			defaults: { overwrite: false, maxConcurrency: getConfigValue('maxParallelization') ?? 16 },
 			allowed: ['onProgress', 'signal'],
 		});
 		requireNode('Downloading files');
