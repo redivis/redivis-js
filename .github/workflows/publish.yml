@@ -115,7 +115,8 @@ jobs:
                   fi
                   flags=(--access public)
                   if [ "$PRERELEASE" = "true" ]; then flags+=(--tag next); fi
-                  npm publish dist/*.tgz "${flags[@]}"
+                  # The ./ is needed, or npm reads dist/<name>.tgz as a GitHub repository (owner/repo)
+                  npm publish ./dist/*.tgz "${flags[@]}"
 
     release:
         needs: [check, publish]
