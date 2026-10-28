@@ -95,9 +95,32 @@ export default class Query extends TabularReader {
 		return `query_${finishedAt.toISOString().replace(/[.:]/g, '_')}`;
 	}
 
-	/** @protected */
-	async _getReadInfo() {
+	/**
+	 * @protected
+	 * @param {{maxResults?: number | null, variables?: string[], allowListRows?: boolean}} [options]
+	 */
+	async _getReadInfo({ maxResults, variables, allowListRows = false } = {}) {
+		// A read that runs the query asks for the rows along with it, which the API returns if the query finishes quickly.
+		//   Variables are validated once the query has run, so invalid ones are left for that to report.
+		const selectedVariables = Array.isArray(variables) && variables.length ? variables.map(String) : undefined;
+		const rowsResponse = await this.#initiate(
+			allowListRows
+				? {
+						maxResults: maxResults ?? undefined,
+						selectedVariables,
+						format: 'arrow',
+						eosSentinel: true,
+					}
+				: undefined,
+		);
+		if (rowsResponse) {
+			return { canListRows: true, rowsResponse };
+		}
 		await this._waitForFinish();
+		// When the query responded with its rows, we don't yet know its size
+		if (this.properties.outputNumBytes === undefined) {
+			await this.get();
+		}
 		return {
 			numRows: this.properties.outputNumRows,
 			numBytes: this.properties.outputNumBytes,
@@ -105,13 +128,27 @@ export default class Query extends TabularReader {
 		};
 	}
 
-	// The query is only created once, however many callers are waiting on it
-	#initiate() {
-		if (!this.#initiation) {
-			this.#initiation = makeRequest({ method: 'POST', path: '/queries', payload: this.#payload }).then(
-				(properties) => this._updateProperties(properties),
-			);
+	// The query is only created once, however many callers are waiting on it. With `listRows`, the caller that creates
+	//   it gets the response containing its rows, if the API returned them rather than the query.
+	#initiate(listRows) {
+		if (this.#initiation) {
+			return this.#initiation.then(() => undefined);
 		}
+		this.#initiation = makeRequest({
+			method: 'POST',
+			path: '/queries',
+			payload: { ...this.#payload, listRows },
+			parseResponse: false,
+		}).then(async (response) => {
+			// Content-Location is the URI of the rows, and Location that of the query
+			if (!response.headers.get('content-location')) {
+				this._updateProperties(await response.json());
+				return undefined;
+			}
+			const id = response.headers.get('location').split('/').pop();
+			this._updateProperties({ kind: 'query', id, uri: `/queries/${id}`, status: 'completed' });
+			return response;
+		});
 		return this.#initiation;
 	}
 

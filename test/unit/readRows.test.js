@@ -295,18 +295,28 @@ test('converts columns to strings as BigQuery casts them', async () => {
 		result.schema.fields.map(({ type }) => `${type}`),
 		Array(6).fill('Utf8'),
 	);
-	assert.deepEqual(result.toArray().map((row) => row.toJSON()), [
-		{ day: '2020-01-02', when: '2020-01-02 03:04:05', time: '03:04:05', count: '1', score: '1', flag: 'true' },
-		{
-			day: '0001-01-01',
-			when: '2020-01-02 03:04:05.120',
-			time: '03:04:05.000001',
-			count: '-2',
-			score: '0.5',
-			flag: 'false',
-		},
-		{ day: null, when: '1969-12-31 23:59:59.999999', time: '23:59:59.500', count: null, score: '0.1', flag: null },
-	]);
+	assert.deepEqual(
+		result.toArray().map((row) => row.toJSON()),
+		[
+			{ day: '2020-01-02', when: '2020-01-02 03:04:05', time: '03:04:05', count: '1', score: '1', flag: 'true' },
+			{
+				day: '0001-01-01',
+				when: '2020-01-02 03:04:05.120',
+				time: '03:04:05.000001',
+				count: '-2',
+				score: '0.5',
+				flag: 'false',
+			},
+			{
+				day: null,
+				when: '1969-12-31 23:59:59.999999',
+				time: '23:59:59.500',
+				count: null,
+				score: '0.1',
+				flag: null,
+			},
+		],
+	);
 });
 
 test('reads through a read session when listRows requires one', async () => {
@@ -418,6 +428,109 @@ test('queries are read once they finish', async () => {
 	]);
 	assert.equal(polls, 1);
 	assert.equal(requests.filter(({ path }) => path === '/queries').length, 1);
+});
+
+// A query whose POST /queries responds with its rows, as the API does when the query finishes quickly
+function mockQueryWithRows({ postRows, rows }) {
+	return mockFetch(async (request) => {
+		const { path, method } = request;
+		if (path === '/queries' && method === 'POST') {
+			const response = await postRows(request);
+			response.headers.set('location', '/api/v1/queries/q1');
+			response.headers.set('content-location', '/api/v1/queries/q1/rows');
+			return response;
+		} else if (path === '/queries/q1/variables') {
+			return jsonResponse({ results: variables });
+		} else if (path === '/queries/q1/rows') {
+			return rows(request);
+		}
+		throw new Error(`Unexpected request: ${method} ${path}`);
+	});
+}
+
+test('queries that finish quickly are read from the response that runs them', async () => {
+	const requests = mockQueryWithRows({ postRows: () => arrowResponse([batch(0, 2)], { sentinel: true }) });
+	const query = redivis.query('SELECT 1');
+	const rows = await query.toRowsArray(2);
+
+	assert.deepEqual(rows, [
+		{ id: 0, name: 'row 0', score: 0 },
+		{ id: 1, name: 'row 1', score: 0.5 },
+	]);
+	assert.deepEqual(requests[0].body.listRows, { maxResults: 2, format: 'arrow', eosSentinel: true });
+	assert.equal(query.uri, '/queries/q1');
+	assert.equal(query.properties.status, 'completed');
+	assert.deepEqual(
+		requests.map(({ method, path }) => `${method} ${path}`),
+		['POST /queries', 'GET /queries/q1/variables'],
+	);
+
+	// Later reads fetch the query's size, and list the rows as usual
+	mockFetch(({ path }) => {
+		if (path === '/queries/q1') {
+			return jsonResponse({
+				id: 'q1',
+				uri: '/queries/q1',
+				status: 'completed',
+				outputNumRows: 2,
+				outputNumBytes: 10,
+			});
+		} else if (path === '/queries/q1/variables') {
+			return jsonResponse({ results: variables });
+		}
+		return arrowResponse([batch(0, 2)]);
+	});
+	assert.equal((await query.toRowsArray()).length, 2);
+});
+
+test('queries read with variables ask for just those', async () => {
+	const requests = mockQueryWithRows({ postRows: () => arrowResponse([batch(0, 2)], { sentinel: true }) });
+	const rows = await redivis.query('SELECT 1').toRowsArray({ variables: ['SCORE', 'id'] });
+
+	assert.deepEqual(rows, [
+		{ score: 0, id: 0 },
+		{ score: 0.5, id: 1 },
+	]);
+	assert.deepEqual(requests[0].body.listRows.selectedVariables, ['SCORE', 'id']);
+	// Invalid variables are reported by the client, not sent
+	mockQueryWithRows({ postRows: () => arrowResponse([batch(0, 2)], { sentinel: true }) });
+	await assert.rejects(redivis.query('SELECT 1').toRowsArray({ variables: [] }), /non-empty array/);
+});
+
+test('rows that a query responded with are requested again if the response is cut off', async () => {
+	const requests = mockQueryWithRows({
+		postRows: () => arrowResponse([batch(0, 2)]),
+		rows: () => arrowResponse([batch(0, 2)], { sentinel: true }),
+	});
+	assert.deepEqual(ids(await redivis.query('SELECT 1').toArrowTable()), [0, 1]);
+
+	const rowsRequest = requests.find(({ path }) => path === '/queries/q1/rows');
+	assert.equal(rowsRequest.url.search, '?format=arrow&eosSentinel=true');
+});
+
+test('aborting a read stops reading the rows that a query responded with', async () => {
+	let cancelled = false;
+	mockQueryWithRows({
+		// A response whose rows never arrive
+		postRows: () =>
+			new Response(new ReadableStream({ cancel: () => void (cancelled = true) }), {
+				headers: { 'content-type': 'application/vnd.apache.arrow.stream' },
+			}),
+	});
+	const controller = new AbortController();
+	const read = redivis.query('SELECT 1').toArrowTable({ signal: controller.signal });
+	setTimeout(() => controller.abort(new Error('stop')), 50);
+	await assert.rejects(read, /stop/);
+	assert.ok(cancelled);
+});
+
+test("queries that aren't read don't request their rows", async () => {
+	const requests = mockFetch(() => jsonResponse({ id: 'q1', uri: '/queries/q1', status: 'completed' }));
+	await redivis
+		.query('SELECT 1')
+		.listVariables()
+		.catch(() => {});
+	assert.equal(requests[0].body.listRows, undefined);
 });
 
 test('toReadStreams() splits a read across independently readable streams', async () => {

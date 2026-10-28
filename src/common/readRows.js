@@ -27,14 +27,23 @@ export function readStreamSource(id) {
 }
 
 // A single listRows request, which can be read anonymously for public tables. It can't be resumed, so an interrupted
-//   read restarts, and completion is verified by the number of rows received.
-export function listRowsSource({ uri, selectedVariables, maxResults, expectedRows }) {
+//   read restarts, and completion is verified by the end-of-stream sentinel if requested (`eosSentinel`, which only
+//   queries support), and otherwise by the number of rows received. `response` is an already-received response to read
+//   first, e.g. the rows that POST /queries returned; should that read fail, the rows are requested again.
+export function listRowsSource({ uri, selectedVariables, maxResults, expectedRows, eosSentinel = false, response }) {
 	return {
 		path: `${uri}/rows`,
 		// NB: parameters are in a fixed order, so the URL is stable and the browser can revalidate its cached response
-		query: { selectedVariables: selectedVariables?.join(','), maxResults, format: 'arrow' },
+		query: {
+			selectedVariables: selectedVariables?.join(','),
+			maxResults,
+			format: 'arrow',
+			eosSentinel: eosSentinel || undefined,
+		},
 		resumable: false,
+		eosSentinel,
 		expectedRows,
+		response,
 		// The API respects If-Modified-Since, so let the browser revalidate (rather than re-download) a repeated read
 		cache: isNode ? undefined : 'no-cache',
 	};
@@ -142,7 +151,10 @@ async function* readSource(source, context) {
 	while (true) {
 		let receivedSentinel = false;
 		try {
-			const response = await makeRequest({
+			// A received response can only be read once, so any retry (or restarted read) requests the rows again
+			let response = source.response;
+			source.response = undefined;
+			response ??= await makeRequest({
 				method: 'GET',
 				path: source.path,
 				query: source.resumable ? { ...source.query, offset, eosSentinel: true } : source.query,
@@ -170,9 +182,10 @@ async function* readSource(source, context) {
 			}
 			context.signal.throwIfAborted();
 
-			const isFinished = source.resumable
-				? receivedSentinel
-				: source.expectedRows === undefined || offset >= source.expectedRows;
+			const isFinished =
+				source.resumable || source.eosSentinel
+					? receivedSentinel
+					: source.expectedRows === undefined || offset >= source.expectedRows;
 			if (isFinished) {
 				return;
 			}
@@ -236,7 +249,8 @@ function conformBatch(batch, outputSchema) {
 	);
 }
 
-// Counts the bytes of a response body as it's read, failing the read once it exceeds the context's maxBytes
+// Counts the bytes of a response body as it's read, failing the read once it exceeds the context's maxBytes. Aborting
+//   the read stops it, even for a response that wasn't requested with the read's signal (e.g. that of POST /queries).
 function countBytes(body, context) {
 	return body.pipeThrough(
 		new TransformStream({
@@ -250,6 +264,7 @@ function countBytes(body, context) {
 				}
 			},
 		}),
+		{ signal: context.signal },
 	);
 }
 

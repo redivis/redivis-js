@@ -34,7 +34,7 @@ export function jsonResponse(body, { status = 200, headers = {} } = {}) {
 }
 
 // Serializes arrow record batches as an IPC stream body. A `sentinel` adds the empty batch that ends a read stream.
-export async function arrowResponse(batches, { sentinel = false, status = 200 } = {}) {
+export async function arrowResponse(batches, { sentinel = false, status = 200, headers = {} } = {}) {
 	const { RecordBatchStreamWriter } = await import('apache-arrow');
 	const writer = new RecordBatchStreamWriter();
 	for (const batch of batches) writer.write(batch);
@@ -42,6 +42,6 @@ export async function arrowResponse(batches, { sentinel = false, status = 200 } 
 	writer.finish();
 	return new Response(writer.toUint8Array(true), {
 		status,
-		headers: { 'content-type': 'application/vnd.apache.arrow.stream' },
+		headers: { 'content-type': 'application/vnd.apache.arrow.stream', ...headers },
 	});
 }

@@ -90,7 +90,12 @@ export default class TabularReader extends Base {
 	async *#iterate({ maxResults, variables, maxParallelization, batchPreprocessor, onProgress, signal }) {
 		const readOptions = { maxResults, variables, maxParallelization, signal };
 		try {
-			yield* readBatches(await this._prepareRead(readOptions), { maxResults, batchPreprocessor, onProgress, signal });
+			yield* readBatches(await this._prepareRead(readOptions), {
+				maxResults,
+				batchPreprocessor,
+				onProgress,
+				signal,
+			});
 		} catch (e) {
 			// Only ever raised before any rows are read
 			if (!isReadSessionRequired(e)) {
@@ -271,12 +276,14 @@ export default class TabularReader extends Base {
 		return (this.properties?.name || 'export').replace(/\W+/g, '_').toLowerCase();
 	}
 
-	// Waits for the instance to be readable, returning what we know about its size
+	// Waits for the instance to be readable, returning what we know about its size. A read's options are passed when it
+	//   may be served at the same time, in which case `rowsResponse` is the response containing its rows.
 	/**
 	 * @protected
-	 * @returns {Promise<{numRows?: number, numBytes?: number, canListRows: boolean}>}
+	 * @param {{maxResults?: number | null, variables?: string[], allowListRows?: boolean}} [options]
+	 * @returns {Promise<{numRows?: number, numBytes?: number, canListRows: boolean, rowsResponse?: Response}>}
 	 */
-	async _getReadInfo() {
+	async _getReadInfo(options) {
 		throw new Error('Not implemented');
 	}
 
@@ -287,9 +294,34 @@ export default class TabularReader extends Base {
 	 * @returns {Promise<{sources: object[], mappedVariables: Record<string, any>[], totalRows?: number}>}
 	 */
 	async _prepareRead({ maxResults, variables, maxParallelization, maxBytes, signal, allowListRows = true }) {
-		const { numRows, numBytes, canListRows } = await this._getReadInfo();
-		const mappedVariables = await this.#getMappedVariables(variables, signal);
+		const { numRows, numBytes, canListRows, rowsResponse } = await this._getReadInfo({
+			maxResults,
+			variables,
+			allowListRows,
+		});
+		let mappedVariables;
+		try {
+			mappedVariables = await this.#getMappedVariables(variables, signal);
+		} catch (e) {
+			await rowsResponse?.body?.cancel();
+			throw e;
+		}
 		const selectedVariables = variables ? mappedVariables.map(({ name }) => name) : undefined;
+
+		if (rowsResponse) {
+			return {
+				sources: [
+					listRowsSource({
+						uri: this.uri,
+						selectedVariables,
+						maxResults,
+						eosSentinel: true,
+						response: rowsResponse,
+					}),
+				],
+				mappedVariables,
+			};
+		}
 
 		// What matters is the size of the read, not of the whole table, so a capped read is sized by the fraction of
 		//   rows requested (as the server does)
@@ -351,7 +383,6 @@ export default class TabularReader extends Base {
 		});
 	}
 }
-
 
 // listRows can't always serve the rows as a single response (e.g., those of an unreleased version's uploads, when their
 //   schemas differ), in which case it tells us to read them through a read session instead
