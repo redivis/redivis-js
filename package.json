@@ -1,49 +1,52 @@
 {
 	"name": "redivis",
-	"version": "0.3.10",
+	"version": "0.4.0",
 	"description": "Redivis client library for javascript",
-	"scripts": {
-		"test": "NODE_TLS_REJECT_UNAUTHORIZED=0 node test/index.js",
-		"test-browser": "IS_LOCAL_TEST=TRUE npm run build && ((sleep 1 && open http://127.0.0.1:9000/test/browser) && python3 -m http.server 9000)",
-		"prepublishOnly": "./node_modules/.bin/bump --tag && npm run build",
-		"build": "./node_modules/.bin/rollup index.js --config rollup.config.js --format cjs --file ./dist/cjs/index.js && ./node_modules/.bin/rollup index.js --config rollup.config.js --format umd --name \"redivis\" --file ./dist/umd/index.js && ./node_modules/.bin/rollup index.js --config rollup.config.js --format esm --file ./dist/esm/index.js"
-	},
-	"type": "module",
-	"main": "./dist/umd/index.js",
-	"module": "./dist/esm/index.js",
-	"exports": {
-		"import": "./dist/esm/index.js",
-		"require": "./dist/cjs/index.js",
-		"default": "./dist/umd/index.js"
-	},
-	"browser": {
-		"readline": false,
-		"keytar": false
+	"author": "Redivis Inc.",
+	"license": "MIT",
+	"homepage": "https://github.com/redivis/redivis-js",
+	"bugs": {
+		"url": "https://github.com/redivis/redivis-js/issues"
 	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/redivis/redivis-js.git"
 	},
+	"scripts": {
+		"test": "npm run test:unit && npm run test:integration",
+		"test:unit": "cd test/unit && node --test",
+		"test:integration": "cd test/integration && node --use-system-ca --test --test-global-setup=setup.js --test-timeout=900000",
+		"test:coverage": "cd test/unit && node --test --experimental-test-coverage --test-coverage-exclude='**/test/**' --test-coverage-exclude='**/node_modules/**'",
+		"test:browser": "(sleep 1 && open http://127.0.0.1:9000/test/browser) & python3 -m http.server 9000",
+		"build:types": "tsc -p tsconfig.json",
+		"prepublishOnly": "npm run test:unit && npm run build:types"
+	},
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./types/index.d.ts",
+			"default": "./index.js"
+		}
+	},
+	"types": "./types/index.d.ts",
+	"files": [
+		"index.js",
+		"src",
+		"types"
+	],
+	"engines": {
+		"node": ">=22"
+	},
 	"keywords": [
 		"redivis"
 	],
-	"author": "Redivis Inc.",
-	"license": "ISC",
-	"bugs": {
-		"url": "https://github.com/redivis/redivis-js/issues"
-	},
-	"homepage": "https://github.com/redivis/redivis-js#readme",
 	"dependencies": {
-		"apache-arrow": "^11.0.0",
-		"keytar": "^7.9.0"
+		"apache-arrow": "^21.0.0",
+		"temporal-polyfill": "^1.0.5"
 	},
 	"devDependencies": {
-		"@rollup/plugin-json": "6.0.0",
-		"@rollup/plugin-node-resolve": "15.0.2",
-		"@skypack/package-check": "0.2.2",
-		"prettier": "2.8.7",
-		"rollup": "4.43.0",
-		"@jsdevtools/version-bump-prompt": "6.1.0"
+		"prettier": "3.9.10",
+		"typescript": "^6.0.3"
 	},
 	"prettier": {
 		"printWidth": 120,

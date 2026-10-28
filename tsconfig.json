@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"allowJs": true,
+		"checkJs": false,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"outDir": "types",
+		"target": "es2022",
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"resolveJsonModule": true,
+		"lib": ["es2023", "dom", "dom.iterable"],
+		"types": [],
+		"skipLibCheck": true,
+		"stripInternal": true
+	},
+	"include": ["index.js", "src/**/*.js"]
+}

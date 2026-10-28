@@ -1,42 +1,79 @@
-import { makeRequest } from '../common/apiRequest.js';
-// TODO: add statistics, getRows
+import Base from './Base.js';
+import { makeRequest, sleep } from '../common/apiRequest.js';
+import { parseArgs } from '../common/args.js';
+import { definedValues } from '../common/references.js';
 
-export default class Variable {
-	constructor(argName, options = {}) {
-		if (typeof argName === 'object') {
-			options = argName;
-			argName = undefined;
-		}
-		const { name = argName, label, description, valueLabels, type, table, query, properties = {} } = options;
+/**
+ * @typedef {object} VariableOptions One of table, query, or upload is required
+ * @property {import('./Table.js').default} [table]
+ * @property {import('./Query.js').default} [query]
+ * @property {import('./Upload.js').default} [upload]
+ * @property {Record<string, any>} [properties]
+ */
+
+export default class Variable extends Base {
+	/**
+	 * A variable of a table, query, or upload.
+	 *
+	 * @param {[name: string, options: VariableOptions] | [options: VariableOptions & {name: string}]} args
+	 */
+	constructor(...args) {
+		super();
+		const { name, table, query, upload, properties } = parseArgs(args, ['name'], {
+			allowed: ['table', 'query', 'upload', 'properties'],
+		});
+		/** @type {string} */
 		this.name = name;
-		this.type = type;
+		/** @type {import('./Table.js').default | undefined} */
 		this.table = table;
+		/** @type {import('./Query.js').default | undefined} */
 		this.query = query;
-		this.properties = { name, type, label, description, valueLabels, ...properties };
-		this.uri = `${(this.table || this.query).uri}/variables/${this.name}`;
-	}
-	getProperty(prop) {
-		return this.properties?.[prop];
-	}
-	toString() {
-		return JSON.stringify(this.properties, null, 2);
+		/** @type {import('./Upload.js').default | undefined} */
+		this.upload = upload;
+		this.properties = properties;
+		this.uri = properties?.uri ?? `${(table || query || upload).uri}/variables/${encodeURIComponent(name)}`;
 	}
 
-	async exists() {
-		try {
-			await makeRequest({ method: 'GET', path: this.uri });
-		} catch (e) {
-			if (e.status !== 404) {
-				throw e;
+	get type() {
+		return this.properties?.type;
+	}
+
+	/**
+	 * @param {[options: {label?: string, description?: string, valueLabels?: {value: string, label: string}[]}]} args
+	 *   `valueLabels` labels each of the variable's values, e.g. `[{ value: 'a', label: 'The letter a' }]`
+	 * @returns {Promise<this>}
+	 */
+	async update(...args) {
+		const options = parseArgs(args, [], { allowed: ['label', 'description', 'valueLabels'] });
+		if (this.table) {
+			const uri = this.table.uri;
+			await this.table._resolveForWrite();
+			if (this.table.uri !== uri) {
+				this.uri = `${this.table.uri}/variables/${encodeURIComponent(this.name)}`;
 			}
-			return false;
 		}
-		return true;
+		this._updateProperties(await makeRequest({ method: 'PATCH', path: this.uri, payload: definedValues(options) }));
+		return this;
 	}
 
-	async get() {
-		this.properties = await makeRequest({ method: 'GET', path: this.uri });
-		this.uri = this.properties.uri;
-		return this;
+	/**
+	 * Returns the variable's summary statistics, waiting for them to be computed if needed.
+	 *
+	 * @param {[options?: {signal?: AbortSignal}]} args
+	 * @returns {Promise<Record<string, any>>}
+	 */
+	async getStatistics(...args) {
+		const { signal } = parseArgs(args, [], { allowed: ['signal'] });
+		while (true) {
+			const statistics = await makeRequest({ method: 'GET', path: `${this.uri}/statistics`, signal });
+			if (statistics.status !== 'running' && statistics.status !== 'queued') {
+				return statistics;
+			}
+			await sleep(2000, signal);
+		}
+	}
+
+	toString() {
+		return `<Variable ${this.name}${this.type ? ` (${this.type})` : ''}>`;
 	}
 }

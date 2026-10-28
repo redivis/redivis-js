@@ -1,14 +1,59 @@
 <html>
+	<meta charset="utf-8" />
+	<script type="importmap">
+		{
+			"imports": {
+				"apache-arrow": "https://esm.sh/apache-arrow@21.2.0",
+				"temporal-polyfill": "https://esm.sh/temporal-polyfill@1.0.5"
+			}
+		}
+	</script>
+	<body>
+		<pre id="output">Running...</pre>
+		<script type="module">
+			import * as redivis from '../../index.js';
 
-<script>
-	import('../../dist/esm/index.js')
-		.then(async (redivis) => {
-			document.body.innerHTML = 'Running query...'
-			window.redivis = redivis
-			const query = redivis.query(`SELECT * FROM demo.us_forest_service_fires:5k9t:v1_1.us_fire_perimeters:9r58 LIMIT 10`);
-			const results = await query.listRows();
-			console.log(results)
-			document.body.innerHTML = `<pre>${JSON.stringify(results, null, 2)}</pre>`
-		});
-</script>
+			window.redivis = redivis;
+			const output = document.getElementById('output');
+			const log = (...values) => {
+				console.log(...values);
+				output.textContent += `\n${values.map((v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2))).join(' ')}`;
+			};
+			const check = async (name, fn) => {
+				try {
+					log(`✔ ${name}:`, await fn());
+				} catch (e) {
+					log(`✖ ${name}: ${e.name}: ${e.message}`);
+				}
+			};
+
+			const table = redivis.table('demo.us_forest_service_fires:5k9t:v1_1.us_fire_perimeters:9r58');
+
+			await check('toRowsArray', () =>
+				table.toRowsArray(3, { variables: ['FIRENAME', 'FIREYEAR', 'DBSOURCEDATE'] }),
+			);
+			await check('toArrowTable', async () => (await table.toArrowTable(1000)).numRows);
+			await check('toArrowBatchIterator', async () => {
+				let rows = 0;
+				for await (const batch of table.toArrowBatchIterator(5000, { variables: ['OBJECTID'] }))
+					rows += batch.numRows;
+				return rows;
+			});
+			await check(
+				'toArrowTable over the browser limit (expect a ValueError)',
+				async () => (await table.toArrowTable()).numRows,
+			);
+			const fileTable = redivis.table('demo.chest_x_ray8:05nw:v1_0.files:dhmd');
+			await check('toDirectory', async () => {
+				const directory = await fileTable.toDirectory();
+				const again = await fileTable.toDirectory();
+				return { files: directory.children.size, reusedUnchangedListing: again === directory };
+			});
+			await check('file.download (expect a ValueError, since it needs Node)', async () =>
+				(await fileTable.listFiles(1))[0].download(),
+			);
+			await check('query', () => redivis.query('SELECT 1+1 AS two').toRowsArray());
+			output.textContent += '\nDone';
+		</script>
+	</body>
 </html>
