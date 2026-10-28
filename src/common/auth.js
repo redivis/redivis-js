@@ -1,6 +1,7 @@
 import { showSignInPrompt } from './signInPrompt.js';
 import { isNode, getEnv, importNodeModule } from './node.js';
 import { getConfigValue } from './config.js';
+import { createDpopProof, getDpopKeyThumbprint, shouldUseDpop, syncClockWithServer } from './dpop.js';
 
 // Node mirrors the Python client: an offline (refresh token) login via the device flow, cached on disk. In the
 //   browser the library can run on any site, so it only ever holds a short-lived, read-only token for the tab.
@@ -102,9 +103,30 @@ export async function getRequestConfig() {
 	// Only obtain a token if we already have credentials on hand; otherwise send the request anonymously, since the
 	//   resource may be publicly accessible. If it isn't, makeRequest() authenticates and retries.
 	if (await hasCredentials()) {
-		headers.Authorization = `Bearer ${await getAuthToken()}`;
+		headers.Authorization = getAuthorizationHeader(await getAuthToken());
 	}
 	return { baseUrl: getApiEndpoint(), headers };
+}
+
+/**
+ * Adds the DPoP proof that a request with a DPoP-bound access token needs (see dpop.js). Each proof is accepted only
+ * once, so this is called for every attempt at a request.
+ *
+ * @param {Record<string, string>} headers The request's headers, including its Authorization
+ * @param {{method: string, url: string}} request
+ * @returns {Promise<void>}
+ */
+export async function addDpopProof(headers, { method, url }) {
+	const [scheme, accessToken] = headers.Authorization?.split(' ') || [];
+	if (scheme === 'DPoP') {
+		headers.DPoP = await createDpopProof({ method, url, accessToken });
+	}
+}
+
+// Tokens bound to a DPoP key are sent with the DPoP scheme, and any other as a bearer token
+function getAuthorizationHeader(accessToken) {
+	const isDpopBound = accessToken === cachedCredentials?.access_token && cachedCredentials.token_type === 'DPoP';
+	return `${isDpopBound ? 'DPoP' : 'Bearer'} ${accessToken}`;
 }
 
 // Whether a failed request should prompt a login. Never when the token was provided to us, since logging in
@@ -252,8 +274,8 @@ async function refreshCachedCredentials() {
 	}
 	// Anything else (e.g. a 503 during a deploy) says nothing about the refresh token, so keep it for a later call to
 	//   retry with
-	const { access_token, expires_at, expires_in } = await parseOAuthResponse(res);
-	await writeCachedCredentials({ ...cachedCredentials, access_token, expires_at, expires_in });
+	const { access_token, token_type, expires_at, expires_in } = await parseOAuthResponse(res);
+	await writeCachedCredentials({ ...cachedCredentials, access_token, token_type, expires_at, expires_in });
 }
 
 async function performOAuthLogin({ scope, amrValues, upgradeCredentials = false }) {
@@ -264,7 +286,7 @@ async function performOAuthLogin({ scope, amrValues, upgradeCredentials = false 
 	// Sent along so that the new token is merged with the scopes and logins of the current one
 	const headers = {};
 	if (upgradeCredentials && cachedCredentials?.access_token) {
-		headers.Authorization = `Bearer ${cachedCredentials.access_token}`;
+		headers.Authorization = getAuthorizationHeader(cachedCredentials.access_token);
 	}
 
 	const credentials = isNode
@@ -360,6 +382,8 @@ async function performPopupAuthorization({ scope, headers }) {
 	const state = generateRandomString();
 	const { challenge, verifier } = await getPKCE();
 	const baseUrl = getBaseUrl();
+	// Checked while the user signs in, so that the code exchange doesn't wait on it
+	const useDpop = shouldUseDpop(baseUrl);
 	// The consent screen shows this origin to the user, and only posts the code back to a page at it
 	const { origin, protocol, hostname } = window.location;
 	// Plain http is only allowed for local development
@@ -464,16 +488,38 @@ async function performPopupAuthorization({ scope, headers }) {
 				if (state !== finalState) {
 					throw new Error(`An error occurred during login. Inconsistent state.`);
 				}
-				const res = await fetch(`${baseUrl}/oauth/token`, {
-					method: 'POST',
-					headers: { ...headers, 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						grant_type: 'authorization_code',
-						code,
-						redirect_uri: redirectUri,
-						code_verifier: verifier,
-					}),
-				});
+				const tokenUrl = `${baseUrl}/oauth/token`;
+				const requestToken = async () =>
+					fetch(tokenUrl, {
+						method: 'POST',
+						headers: {
+							...headers,
+							'Content-Type': 'application/json',
+							// Binds the token to this client's key, if the API supports it (see dpop.js)
+							...((await useDpop) && { DPoP: await createDpopProof({ method: 'POST', url: tokenUrl }) }),
+						},
+						body: JSON.stringify({
+							grant_type: 'authorization_code',
+							code,
+							redirect_uri: redirectUri,
+							code_verifier: verifier,
+						}),
+					});
+				let res = await requestToken();
+				// A proof dated by a clock that's off is rejected, before the code is used, so the code can be exchanged
+				//   again with a proof dated by the server's clock
+				if (
+					res.status === 400 &&
+					(
+						await res
+							.clone()
+							.json()
+							.catch(() => ({}))
+					).error === 'invalid_dpop_proof' &&
+					syncClockWithServer(res, tokenUrl)
+				) {
+					res = await requestToken();
+				}
 				resolve(await parseOAuthResponse(res));
 			} catch (e) {
 				reject(e);
@@ -519,7 +565,13 @@ async function loadCachedCredentials() {
 			const { readFile } = await importNodeModule('fs/promises');
 			credentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
 		} else {
-			credentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
+			const storedCredentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
+			// A token bound to a DPoP key is useless without it, e.g. if the key couldn't be stored, and was lost with
+			//   the page that created it
+			const jkt = decodeAccessToken(storedCredentials)?.cnf?.jkt;
+			if (!jkt || jkt === (await getDpopKeyThumbprint(getBaseUrl()))) {
+				credentials = storedCredentials;
+			}
 		}
 	} catch (e) {
 		// ignore; there are no readable credentials

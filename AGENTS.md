@@ -35,6 +35,8 @@ opens a browser. They take several minutes and create data, so only run them whe
     - `args.js`: `parseArgs()`, for the `fn(...positional, options)` calling convention.
     - `auth.js`, `signInPrompt.js`: OAuth login (the device flow in Node, a popup in the browser), and the credentials
       cached for each environment.
+    - `dpop.js`: in the browser, binds access tokens to a non-extractable key (DPoP, RFC 9449), kept in IndexedDB, and
+      signs the proof that each request with such a token carries.
     - `config.js`: the library-wide settings behind `config()`.
     - `references.js`: parsing references like `owner.dataset:v1_0.table`.
     - `readRows.js`, `arrowTypes.js`, `rowsArray.js`: reading tables and queries into Arrow, and converting to rows.

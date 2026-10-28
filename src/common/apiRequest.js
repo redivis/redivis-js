@@ -1,4 +1,5 @@
-import { canReauthorize, getRequestConfig, refreshCredentials } from './auth.js';
+import { addDpopProof, canReauthorize, getRequestConfig, refreshCredentials } from './auth.js';
+import { syncClockWithServer } from './dpop.js';
 import { createApiError, NetworkError } from './errors.js';
 import { jsonReplacer } from './json.js';
 import { isNode } from './node.js';
@@ -53,6 +54,7 @@ export async function makeRequest({
 	Object.assign(headers, extraHeaders);
 
 	const url = `${baseUrl}${path}${toQueryString(query)}`;
+	await addDpopProof(headers, { method, url });
 
 	let body;
 	if (payload !== undefined) {
@@ -107,6 +109,12 @@ export async function makeRequest({
 		const { error, error_description, scope, amr_values } =
 			parsedResponse && typeof parsedResponse === 'object' ? parsedResponse : {};
 
+		// A DPoP proof dated by a clock that's off is rejected, so date a new one by the server's clock, rather than
+		//   treating the token as rejected (which would sign the user out)
+		if (error === 'invalid_dpop_proof' && headers.DPoP && syncClockWithServer(response, url)) {
+			return retry();
+		}
+
 		const isAuthFailure = response.status === 401 || (response.status === 403 && error === 'insufficient_scope');
 		// Authenticating is only worth retrying while it makes progress, i.e. each attempt fails differently than the
 		//   ones before it: an anonymous request that's rejected, then a scope upgrade after logging in, and so on. Once
@@ -132,7 +140,7 @@ export async function makeRequest({
 			await refreshCredentials({
 				scope: scope?.split(' '),
 				amrValues: amr_values,
-				rejectedToken: headers.Authorization?.replace(/^Bearer /, ''),
+				rejectedToken: headers.Authorization?.replace(/^(Bearer|DPoP) /, ''),
 			});
 			return retry({ authFailures: [...authFailures, authFailure] });
 		}
