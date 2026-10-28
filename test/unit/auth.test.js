@@ -30,13 +30,18 @@ async function cacheCredentials(credentials, file = credentialsFile) {
 }
 
 // Mocks the API, which responds to requests authorized with `validToken`, and the OAuth server, which issues
-//   `newToken` for a valid refresh token
-function mockAuth({ validToken = 'access-2', newToken = 'access-2', refreshStatus = 200 } = {}) {
+//   `newToken` for a valid refresh token (and a `newRefreshToken` to replace it, if given, as when rotating)
+function mockAuth({ validToken = 'access-2', newToken = 'access-2', newRefreshToken, refreshStatus = 200 } = {}) {
 	return mockFetch(({ path, headers, body }) => {
 		if (path === '/oauth/token') {
 			assert.equal(body.grant_type, 'refresh_token');
 			return refreshStatus === 200
-				? jsonResponse({ access_token: newToken, expires_at: inAnHour(), expires_in: 3600 })
+				? jsonResponse({
+						access_token: newToken,
+						refresh_token: newRefreshToken,
+						expires_at: inAnHour(),
+						expires_in: 3600,
+					})
 				: jsonResponse({ error: 'invalid_grant' }, { status: refreshStatus });
 		} else if (path === '/oauth/device_authorization') {
 			// Rather than start an interactive login
@@ -119,6 +124,36 @@ test('an access token that is about to expire is refreshed first, once', async (
 	if (process.platform !== 'win32') {
 		assert.equal((await stat(credentialsFile)).mode & 0o777, 0o600);
 	}
+});
+
+test('a rotated refresh token replaces the one that was used', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: Date.now() / 1000 + 60 });
+	const requests = mockAuth({ newToken: 'access-2', newRefreshToken: 'refresh-2' });
+
+	await redivis.makeApiRequest({ path: '/private' });
+
+	const refreshes = requests.filter(({ path }) => path === '/oauth/token');
+	assert.deepEqual(
+		refreshes.map(({ body }) => body.refresh_token),
+		['refresh-1'],
+	);
+	const saved = JSON.parse(await readFile(credentialsFile, 'utf8'));
+	assert.equal(saved.access_token, 'access-2');
+	assert.equal(saved.refresh_token, 'refresh-2');
+});
+
+test('credentials that another process refreshed are used, rather than the replaced refresh token', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: inAnHour() });
+	mockAuth({ validToken: 'access-1' });
+	await redivis.makeApiRequest({ path: '/private' });
+
+	// Another process refreshes the shared credentials, which replaces the refresh token held here
+	await cacheCredentials({ access_token: 'access-2', refresh_token: 'refresh-2', expires_at: inAnHour() });
+	const requests = mockAuth({ validToken: 'access-2' });
+	await redivis.makeApiRequest({ path: '/private' });
+
+	assert.deepEqual(authorizationHeaders(requests), ['Bearer access-1', 'Bearer access-2']);
+	assert.equal(requests.filter(({ path }) => path === '/oauth/token').length, 0);
 });
 
 test('a rejected access token is refreshed, and the request retried', async () => {

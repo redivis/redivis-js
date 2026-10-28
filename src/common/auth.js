@@ -256,6 +256,18 @@ function getCredentialScope(credentials) {
 
 // Exchanges the refresh token for a new access token, clearing the credentials if it's been rejected
 async function refreshCachedCredentials() {
+	// Each refresh replaces the refresh token, and the server revokes the login if a replaced one is used again. So if
+	//   another process sharing these credentials has refreshed them since they were read, use what it saved instead.
+	if (isNode) {
+		const savedCredentials = await readCredentialsFile((await getCredentialsPaths()).credentialsFile);
+		if (savedCredentials?.refresh_token && savedCredentials.refresh_token !== cachedCredentials?.refresh_token) {
+			credentialsGeneration++;
+			cachedCredentials = savedCredentials;
+			if (savedCredentials.expires_at > Date.now() / 1000 + 5 * 60) {
+				return;
+			}
+		}
+	}
 	if (!cachedCredentials?.refresh_token) {
 		return clearCachedCredentials();
 	}
@@ -274,8 +286,22 @@ async function refreshCachedCredentials() {
 	}
 	// Anything else (e.g. a 503 during a deploy) says nothing about the refresh token, so keep it for a later call to
 	//   retry with
-	const { access_token, token_type, expires_at, expires_in } = await parseOAuthResponse(res);
-	await writeCachedCredentials({ ...cachedCredentials, access_token, token_type, expires_at, expires_in });
+	const {
+		access_token,
+		// Servers that rotate refresh tokens return a new one, which replaces the one that was just used
+		refresh_token = cachedCredentials.refresh_token,
+		token_type,
+		expires_at,
+		expires_in,
+	} = await parseOAuthResponse(res);
+	await writeCachedCredentials({
+		...cachedCredentials,
+		access_token,
+		refresh_token,
+		token_type,
+		expires_at,
+		expires_in,
+	});
 }
 
 async function performOAuthLogin({ scope, amrValues, upgradeCredentials = false }) {
@@ -552,6 +578,16 @@ async function getCredentialsPaths() {
 	return { credentialsDir, credentialsFile: path.join(credentialsDir, 'js_credentials') };
 }
 
+// The credentials saved in a file (in Node), or null if there are none
+async function readCredentialsFile(credentialsFile) {
+	const { readFile } = await importNodeModule('fs/promises');
+	try {
+		return JSON.parse(await readFile(credentialsFile, 'utf8'));
+	} catch {
+		return null;
+	}
+}
+
 async function loadCachedCredentials() {
 	const credentialsFile = isNode ? (await getCredentialsPaths()).credentialsFile : undefined;
 	// When there are no credentials, check again each time, in case another process has since logged in
@@ -562,8 +598,7 @@ async function loadCachedCredentials() {
 	let credentials = null;
 	try {
 		if (isNode) {
-			const { readFile } = await importNodeModule('fs/promises');
-			credentials = JSON.parse(await readFile(credentialsFile, 'utf8'));
+			credentials = await readCredentialsFile(credentialsFile);
 		} else {
 			const storedCredentials = JSON.parse(sessionStorage.getItem(browserStorageKey));
 			// A token bound to a DPoP key is useless without it, e.g. if the key couldn't be stored, and was lost with
