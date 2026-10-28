@@ -115,7 +115,10 @@ test('an access token that is about to expire is refreshed first, once', async (
 	const saved = JSON.parse(await readFile(credentialsFile, 'utf8'));
 	assert.equal(saved.access_token, 'access-2');
 	assert.equal(saved.refresh_token, 'refresh-1');
-	assert.equal((await stat(credentialsFile)).mode & 0o777, 0o600);
+	// Windows has no POSIX permission bits (files there are protected by ACLs, which Node doesn't report)
+	if (process.platform !== 'win32') {
+		assert.equal((await stat(credentialsFile)).mode & 0o777, 0o600);
+	}
 });
 
 test('a rejected access token is refreshed, and the request retried', async () => {
