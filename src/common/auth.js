@@ -100,10 +100,14 @@ export async function getRequestConfig() {
 		return { ...apiProxy, headers: { ...apiProxy.headers } };
 	}
 	const headers = {};
-	// Only obtain a token if we already have credentials on hand; otherwise send the request anonymously, since the
-	//   resource may be publicly accessible. If it isn't, makeRequest() authenticates and retries.
+	// Only send a token we can obtain without logging in, of whatever scope; otherwise send the request anonymously,
+	//   since the resource may be publicly accessible. If it isn't, or needs more scope, the server says so, and
+	//   makeRequest() authenticates and retries.
 	if (await hasCredentials()) {
-		headers.Authorization = getAuthorizationHeader(await getAuthToken());
+		const accessToken = await getAuthToken({ scope: [], interactive: false });
+		if (accessToken) {
+			headers.Authorization = getAuthorizationHeader(accessToken);
+		}
 	}
 	return { baseUrl: getApiEndpoint(), headers };
 }
@@ -144,10 +148,11 @@ async function hasCredentials() {
 }
 
 /**
- * @param {{scope?: string[]}} [options]
- * @returns {Promise<string>}
+ * @param {{scope?: string[], interactive?: boolean}} [options] If not `interactive`, resolves to null rather than
+ *   logging in when no token can be obtained without one
+ * @returns {Promise<string | null>}
  */
-export async function getAuthToken({ scope } = {}) {
+export async function getAuthToken({ scope, interactive = true } = {}) {
 	if (apiToken) {
 		return apiToken;
 	}
@@ -176,6 +181,9 @@ export async function getAuthToken({ scope } = {}) {
 			if (cachedCredentials) {
 				return cachedCredentials.access_token;
 			}
+		}
+		if (!interactive) {
+			return null;
 		}
 		await performOAuthLogin({
 			scope: missingScope.length ? missingScope : scope,
@@ -309,7 +317,8 @@ async function performOAuthLogin({ scope, amrValues, upgradeCredentials = false 
 	//   prompted by one resource's required scope) would make getAuthToken() prompt again on the very next request.
 	scope = [...new Set([...defaultScope, ...(scope || [])])];
 
-	// Sent along so that the new token is merged with the scopes and logins of the current one
+	// Sent along so that the new token is merged with the scopes and logins of the current one, and so that the user can
+	//   be asked to sign in with a login it needs (amrValues), which only the user it belongs to can look up
 	const headers = {};
 	if (upgradeCredentials && cachedCredentials?.access_token) {
 		headers.Authorization = getAuthorizationHeader(cachedCredentials.access_token);
@@ -317,7 +326,7 @@ async function performOAuthLogin({ scope, amrValues, upgradeCredentials = false 
 
 	const credentials = isNode
 		? await performDeviceAuthorization({ scope, amrValues, headers })
-		: await performPopupAuthorization({ scope, headers });
+		: await performPopupAuthorization({ scope, amrValues, headers });
 
 	await writeCachedCredentials(credentials);
 }
@@ -328,7 +337,7 @@ async function performDeviceAuthorization({ scope, amrValues, headers }) {
 	const deviceAuthorization = await parseOAuthResponse(
 		await fetch(`${getBaseUrl()}/oauth/device_authorization`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { ...headers, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				client_id: clientId,
 				scope: scope.join(' '),
@@ -403,7 +412,7 @@ async function openBrowser(url) {
 	});
 }
 
-async function performPopupAuthorization({ scope, headers }) {
+async function performPopupAuthorization({ scope, amrValues, headers }) {
 	const redirectUri = 'urn:ietf:wg:oauth:2.0:oob:auto';
 	const state = generateRandomString();
 	const { challenge, verifier } = await getPKCE();
@@ -425,8 +434,15 @@ async function performPopupAuthorization({ scope, headers }) {
 		code_challenge: challenge,
 		code_challenge_method: 'S256',
 	};
+	// The request is pushed first (RFC 9126), so that the consent screen shows, and the code is issued for, exactly these
+	//   parameters, rather than what's in its URL. It's also pushed with the current token, if any, which opening the
+	//   consent screen can't send, so that the user is asked to sign in with any login it needs (amrValues).
+	const requestUri = await pushAuthorizationRequest(
+		amrValues ? { ...params, amr_values: amrValues } : params,
+		headers,
+	);
 	// Not URLSearchParams, since the consent screen decodes with decodeURIComponent, which leaves a + for a space
-	const url = `${baseUrl}/oauth/authorize?${Object.entries(params)
+	const url = `${baseUrl}/oauth/authorize?${Object.entries(requestUri ? { request_uri: requestUri } : params)
 		.map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
 		.join('&')}`;
 	const popupWindowSettings = 'toolbar=no,menubar=no,width=600,height=600,left=100,top=100';
@@ -552,6 +568,52 @@ async function performPopupAuthorization({ scope, headers }) {
 			}
 		}
 	});
+}
+
+// The request_uri for an authorization request with these parameters, or null if the API doesn't support pushing it, in
+//   which case the consent screen is opened with the parameters instead, as before
+async function pushAuthorizationRequest(params, headers) {
+	const url = `${getBaseUrl()}/oauth/par`;
+	const accessToken = headers.Authorization?.replace(/^(Bearer|DPoP) /, '');
+	const pushRequest = async () =>
+		fetch(url, {
+			method: 'POST',
+			headers: {
+				...headers,
+				'Content-Type': 'application/json',
+				...(headers.Authorization?.startsWith('DPoP ') && {
+					DPoP: await createDpopProof({ method: 'POST', url, accessToken }),
+				}),
+			},
+			body: JSON.stringify(params),
+		});
+
+	let res;
+	try {
+		res = await pushRequest();
+		// A proof dated by a clock that's off is rejected, so date a new one by the server's clock
+		if (
+			res.status === 400 &&
+			(
+				await res
+					.clone()
+					.json()
+					.catch(() => ({}))
+			).error === 'invalid_dpop_proof' &&
+			syncClockWithServer(res, url)
+		) {
+			res = await pushRequest();
+		}
+	} catch {
+		// e.g. an API that doesn't allow the request from this origin
+		return null;
+	}
+	// e.g. an API that predates pushed authorization requests, or is briefly unavailable
+	if (res.status === 404 || res.status === 405 || res.status >= 500) {
+		return null;
+	}
+	// Otherwise, a request that's rejected here would also be rejected by the consent screen, so say why now
+	return (await parseOAuthResponse(res)).request_uri;
 }
 
 async function parseOAuthResponse(res) {

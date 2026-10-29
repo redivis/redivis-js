@@ -181,6 +181,47 @@ test('a rejected refresh token clears the credentials, and requires a login', as
 	assert.equal(await redivis.isAuthorized(), false);
 });
 
+test('a login that the API asks for is requested with the current token, so that the user is asked to use it', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: inAnHour() });
+	const requests = mockFetch(({ path }) =>
+		path === '/oauth/device_authorization'
+			? jsonResponse({ error: 'invalid_client' }, { status: 400 })
+			: jsonResponse({ error: 'insufficient_user_authentication', amr_values: '123 456' }, { status: 401 }),
+	);
+
+	await assert.rejects(redivis.makeApiRequest({ path: '/private' }), { message: 'invalid_client', status: 400 });
+
+	const deviceAuthorization = requests.find(({ path }) => path === '/oauth/device_authorization');
+	assert.equal(deviceAuthorization.body.amr_values, '123 456');
+	assert.equal(deviceAuthorization.headers.Authorization, 'Bearer access-1');
+});
+
+test('a rejected refresh token falls back to an anonymous request, without a login', async () => {
+	await cacheCredentials({ access_token: 'access-1', expires_at: Date.now() / 1000 + 60 });
+	const requests = mockAuth({ refreshStatus: 400 });
+
+	assert.deepEqual(await redivis.makeApiRequest({ path: '/public' }), { ok: true });
+
+	assert.deepEqual(
+		requests.map(({ path }) => path),
+		['/oauth/token', '/public'],
+	);
+	assert.deepEqual(authorizationHeaders(requests), [undefined]);
+	assert.equal(await redivis.isAuthorized(), false);
+});
+
+test('a token without the default scope is sent as is, rather than prompting a login first', async () => {
+	const payload = btoa(JSON.stringify({ scope: 'data.data' })).replace(/=+$/, '');
+	const accessToken = `header.${payload}.signature`;
+	await cacheCredentials({ access_token: accessToken, expires_at: inAnHour() });
+	const requests = mockAuth();
+
+	assert.deepEqual(await redivis.makeApiRequest({ path: '/public' }), { ok: true });
+
+	assert.deepEqual(authorizationHeaders(requests), [`Bearer ${accessToken}`]);
+	assert.equal(requests.filter(({ path }) => path.startsWith('/oauth')).length, 0);
+});
+
 test('a failed refresh for another reason keeps the credentials', async () => {
 	await cacheCredentials({ access_token: 'access-1', expires_at: Date.now() / 1000 + 60 });
 	mockAuth({ refreshStatus: 500 });
