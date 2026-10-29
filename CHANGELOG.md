@@ -5,6 +5,21 @@ Each release's section here becomes its notes on [GitHub](https://github.com/red
 
 ## Unreleased
 
+## 0.4.2
+
+### Fixes
+
+- A cached login that can no longer be refreshed (e.g. it was revoked, or has expired) no longer prompts a login
+  before a request is even sent. Requests are made anonymously instead, so public data can still be read, and you're only
+  prompted to log in when the API requires it. Similarly, a cached token is sent as is, rather than prompting for more
+  scope until the API asks for it.
+- When the API requires you to sign in with a particular login (e.g. through your organization's identity provider),
+  the sign-in page now asks you to use that login, rather than showing the usual sign-in options. In the browser it
+  never did.
+- In the browser, the sign-in request is now sent to Redivis before the sign-in window opens (a pushed authorization
+  request), so what the window shows, and what you authorize, can't be changed in the browser. An invalid request is
+  reported right away, rather than in the sign-in window.
+
 ## 0.4.1
 
 ### Fixes
