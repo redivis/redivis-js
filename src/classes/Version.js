@@ -12,21 +12,23 @@ export default class Version extends Base {
 	 * A version of a dataset.
 	 *
 	 * @param {[tag: string, options: {dataset: Dataset, properties?: Record<string, any>}] | [options: {tag: string, dataset: Dataset, properties?: Record<string, any>}]} args
-	 *   The version tag, e.g. `v1_0`, `current`, or `next`
+	 *   The version tag, e.g. `v1.0` (or as in a reference, `v1_0`), `current`, or `next`
 	 */
 	constructor(...args) {
 		super();
 		const { tag, dataset, properties } = parseArgs(args, ['tag'], { allowed: ['dataset', 'properties'] });
-		/** @type {string} */
+		/** @type {string} The version's tag, e.g. `v1.0`, `current`, or `next` */
 		this.tag = normalizeVersionTag(tag);
 		this.#dataset = dataset;
-		this.uri = properties?.uri ?? `${dataset.uri}/versions/${encodeURIComponent(this.tag)}`;
+		this.uri =
+			properties?.uri ??
+			`${dataset.uri}/versions/${encodeURIComponent(normalizeVersionTag(tag, { forReference: true }))}`;
 		this.properties = properties;
 	}
 
 	toString() {
 		const datasetReference = this.#dataset.qualifiedReference.replace(/:(v\d+[._]\d+|current|next)$/i, '');
-		return `<Version ${datasetReference}:${this.tag}>`;
+		return `<Version ${datasetReference}:${normalizeVersionTag(this.tag, { forReference: true })}>`;
 	}
 
 	/**

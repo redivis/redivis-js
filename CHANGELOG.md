@@ -5,6 +5,14 @@ Each release's section here becomes its notes on [GitHub](https://github.com/red
 
 ## Unreleased
 
+## 0.4.1
+
+### Fixes
+
+- `version.tag` is now the version's tag as the API returns it, e.g. `v1.0`, rather than the form used in references
+  (`v1_0`). `dataset.versionTag` and references are unchanged, and either form is still accepted wherever a tag is
+  passed.
+
 ## 0.4.0
 
 **This release brings the JavaScript client to feature parity with the [Python](https://github.com/redivis/redivis-python)

@@ -163,7 +163,9 @@ test('navigates between dataset versions', async () => {
 	const dataset = redivis.dataset('demo.ds');
 	const version = await dataset.version();
 	assert.ok(version instanceof Version);
-	assert.equal(version.tag, 'v1_1');
+	assert.equal(version.tag, 'v1.1');
+	assert.equal(version.uri, '/datasets/demo.ds/versions/v1_1');
+	assert.equal(version.dataset().qualifiedReference, 'demo.ds:v1_1');
 
 	const previous = await dataset.previousVersion();
 	assert.equal(previous.qualifiedReference, 'demo.ds:v1_0');
@@ -181,6 +183,9 @@ test('versions can be updated, deleted, and undeleted', async () => {
 		'POST /v/undelete': { tag: 'v1.0', uri: '/v', isDeleted: false },
 	});
 	const version = await redivis.dataset('demo.ds').version('1.0');
+	assert.equal(version.tag, 'v1.0');
+	assert.equal((await redivis.dataset('demo.ds').version('v1_0')).tag, 'v1.0');
+	assert.equal((await redivis.dataset('demo.ds').version('next')).tag, 'next');
 	assert.equal(await version.update({ label: 'L', releaseNotes: undefined }), version);
 	assert.equal((await version.delete()).getProperty('isDeleted'), true);
 	assert.equal((await version.undelete()).getProperty('isDeleted'), false);

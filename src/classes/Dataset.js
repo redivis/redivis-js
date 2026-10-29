@@ -82,7 +82,7 @@ export default class Dataset extends Base {
 			version = name.match(/:(v\d+[._]\d+|current|next)/i)?.[1];
 		}
 		/** @type {string | undefined} */
-		this.versionTag = normalizeVersionTag(version);
+		this.versionTag = normalizeVersionTag(version, { forReference: true });
 
 		/** @type {string} */
 		this.scopedReference =
@@ -314,7 +314,7 @@ export default class Dataset extends Base {
 		super._updateProperties(properties);
 		this.name = properties.name;
 		if (properties.version?.tag) {
-			this.versionTag = normalizeVersionTag(properties.version.tag);
+			this.versionTag = normalizeVersionTag(properties.version.tag, { forReference: true });
 		}
 		if (this.user && this.organization && properties.owner?.kind) {
 			if (properties.owner.kind === 'user') {
@@ -339,12 +339,13 @@ export default class Dataset extends Base {
 	}
 }
 
-// The tags `v1.0` and `v1_0` are equivalent, but only the latter can be used in a reference
-export function normalizeVersionTag(tag) {
+// A version's tag is e.g. `v1.0`, but since `.` separates the parts of a reference, a reference writes it as the
+//   equivalent `v1_0`. Either form is accepted, and normalized to the tag, or with `forReference`, to the latter.
+export function normalizeVersionTag(tag, { forReference = false } = {}) {
 	if (!tag) {
 		return undefined;
 	}
-	tag = String(tag).replace(/^(v?\d+)\.(\d+)$/i, '$1_$2');
+	tag = String(tag).replace(/^(v?\d+)[._](\d+)$/i, forReference ? '$1_$2' : '$1.$2');
 	if (tag !== 'current' && tag !== 'next' && !tag.toLowerCase().startsWith('v')) {
 		return `v${tag}`;
 	}
