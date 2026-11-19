@@ -1,10 +1,11 @@
 import TabularReader from './TabularReader.js';
 import Variable from './Variable.js';
-import { makePaginatedRequest, makeRequest, sleep } from '../common/apiRequest.js';
+import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { JobError, ValueError } from '../common/errors.js';
+import { computeMd5Base64, createImport, finalizeImport, uploadImportFile, waitForImport } from '../common/imports.js';
 import { definedValues } from '../common/references.js';
-import { createTempUploads, resolveContent, uploadToTempUpload } from '../common/upload.js';
+import { resolveContent } from '../common/upload.js';
 
 /** @typedef {import('../common/args.js').ListArgs} ListArgs */
 /** @typedef {import('../common/args.js').NameArgs} NameArgs */
@@ -19,8 +20,10 @@ import { createTempUploads, resolveContent, uploadToTempUpload } from '../common
  * @property {string} [type] The file type (e.g. `delimited`, `parquet`, `jsonl`, `stream`). Inferred from the name
  *   if not given.
  * @property {number} [size] The size in bytes, required when the content is a ReadableStream
- * @property {Record<string, any>} [transferSpecification] Import the data from another source (e.g., a URL or a cloud
- *   bucket), rather than uploading content
+ * @property {Record<string, any>} [transferSpecification] Import the data from
+ *   another source, rather than uploading content: its `sourceType` (`url`, `gcs`, `s3`, `gDrive`, `box`, `bigQuery`,
+ *   or `redivis`), its `sourcePath`, and, for a source that's accessed through one of your integrations, its
+ *   `identity` (the email of that integration's account)
  * @property {Record<string, any>[]} [schema] The variables of a `stream` upload
  * @property {Record<string, any>} [metadata] Variable metadata, keyed by variable name
  * @property {string} [delimiter]
@@ -42,6 +45,9 @@ import { createTempUploads, resolveContent, uploadToTempUpload } from '../common
  */
 
 export default class Upload extends TabularReader {
+	/** The import that created this upload, which is polled while it's processed */
+	#import;
+
 	/**
 	 * An upload of data to a table, in the next version of its dataset.
 	 *
@@ -114,6 +120,13 @@ export default class Upload extends TabularReader {
 			console.warn("The schema option is ignored for uploads that aren't of type `stream`");
 		}
 
+		// Uploads are written through the table's own URI, never one scoped to a workflow
+		const tableUri = this.table.uri;
+		await this.table._resolveForWrite();
+		if (this.table.uri !== tableUri) {
+			this.uri = uploadUri(this.table, this.name);
+		}
+
 		const resolvedContent =
 			content === undefined || content === null ? undefined : await resolveContent(content, options);
 		if (resolvedContent) {
@@ -137,59 +150,89 @@ export default class Upload extends TabularReader {
 			}
 		}
 
-		let tempUploadId;
+		const tabularOptions = {
+			metadata: options.metadata,
+			hasHeaderRow: options.hasHeaderRow,
+			skipBadRecords: options.skipBadRecords,
+			hasQuotedNewlines: options.hasQuotedNewlines,
+			allowJaggedRows: options.allowJaggedRows,
+			quoteCharacter: options.quoteCharacter,
+			escapeCharacter: options.escapeCharacter,
+			nullMarkers: options.nullMarkers,
+			delimiter: options.delimiter,
+		};
+
 		if (resolvedContent) {
 			const { size } = resolvedContent;
-			const [tempUpload] = await createTempUploads(this.table.uri, [{ size, name: this.name }], { signal });
-			onProgress?.({ bytesUploaded: 0, totalBytes: size });
-			await uploadToTempUpload(tempUpload, resolvedContent, {
-				onProgress: (bytesUploaded) => onProgress?.({ bytesUploaded, totalBytes: size }),
-				signal,
-			});
-			tempUploadId = tempUpload.id;
-		}
-
-		this._updateProperties(
-			await makeRequest({
-				method: 'POST',
-				path: `${this.table.uri}/uploads`,
-				signal,
-				payload: definedValues({
-					name: this.name,
+			const md5Hash = await computeMd5Base64(resolvedContent, { signal });
+			let dataImport = await createImport(
+				this.table.uri,
+				{
+					name: this.name || undefined,
 					type,
-					schema: options.schema,
-					metadata: options.metadata,
-					hasHeaderRow: options.hasHeaderRow,
-					skipBadRecords: options.skipBadRecords,
-					hasQuotedNewlines: options.hasQuotedNewlines,
-					allowJaggedRows: options.allowJaggedRows,
-					quoteCharacter: options.quoteCharacter,
-					escapeCharacter: options.escapeCharacter,
-					nullMarkers: options.nullMarkers,
-					delimiter: options.delimiter,
-					tempUploadId,
-					transferSpecification: options.transferSpecification,
+					...tabularOptions,
+					totalFileCount: 1,
+					totalSize: size,
+				},
+				{ signal },
+			);
+			this.#setImport(dataImport);
+			onProgress?.({ bytesUploaded: 0, totalBytes: size });
+			await uploadImportFile(
+				dataImport,
+				resolvedContent.name || dataImport.name || (type ? `data.${type}` : 'data'),
+				resolvedContent,
+				{ md5Hash, onProgress: (bytesUploaded) => onProgress?.({ bytesUploaded, totalBytes: size }), signal },
+			);
+			dataImport = await finalizeImport(dataImport, { signal });
+			await this.#finishImport(dataImport, options);
+		} else if (options.transferSpecification) {
+			const { sourceType, sourcePath, identity } = options.transferSpecification;
+			const dataImport = await createImport(
+				this.table.uri,
+				{
+					name: this.name || undefined,
+					type,
+					sourceType,
+					sourcePaths: sourcePath === undefined || sourcePath === null ? undefined : [sourcePath],
+					identity,
+					...tabularOptions,
+				},
+				{ signal },
+			);
+			this.#setImport(dataImport);
+			await this.#finishImport(dataImport, options);
+		} else {
+			// A stream upload, into which rows are inserted
+			this._updateProperties(
+				await makeRequest({
+					method: 'POST',
+					path: `${this.table.uri}/uploads`,
+					signal,
+					payload: definedValues({ name: this.name, type, schema: options.schema, ...tabularOptions }),
 				}),
-			}),
-		);
-
-		if ((tempUploadId || options.transferSpecification) && options.waitForFinish) {
-			await this.#waitForImport(options);
+			);
 		}
 		return this;
 	}
 
-	async #waitForImport({ raiseOnFail, removeOnFail, signal }) {
-		while (this.properties.status !== 'completed' && this.properties.status !== 'failed') {
-			await sleep(2000, signal);
-			await this.get();
+	// Takes the name the import was given (which differs from the one asked for if it was renamed on a conflict), and
+	//   addresses the upload by it, as an upload is by its name
+	#setImport(dataImport) {
+		this.#import = dataImport;
+		this.name = dataImport.name ?? this.name;
+		this.uri = uploadUri(this.table, this.name);
+	}
+
+	// Waits for the import to be processed (if asked to), then fetches the upload it created
+	async #finishImport(dataImport, { waitForFinish, raiseOnFail, removeOnFail, signal }) {
+		if (waitForFinish) {
+			dataImport = await waitForImport(dataImport, { raiseOnFail: false, signal });
+			this.#import = dataImport;
 		}
-		if (this.properties.status === 'failed') {
-			const error = new JobError({
-				message: this.properties.errorMessage,
-				status: this.properties.status,
-				kind: 'upload',
-			});
+		await this.get();
+		if (waitForFinish && dataImport.status !== 'completed') {
+			const error = new JobError({ message: dataImport.errorMessage, status: dataImport.status, kind: 'upload' });
 			if (removeOnFail) {
 				await this.delete();
 			}

@@ -11,6 +11,10 @@ const { version } = packageJson;
 const MAX_AUTH_ATTEMPTS = 5;
 // Retries for a 503 (and, for idempotent requests, network failures), with linear backoff
 const MAX_RETRIES = 10;
+// The statuses retried for a request marked `idempotent`, which is safe to repeat whatever the server did with it
+const IDEMPOTENT_RETRY_STATUSES = [408, 429, 500, 502, 503, 504];
+// The longest a Retry-After header is waited for
+const MAX_RETRY_AFTER_MS = 60_000;
 
 const printedWarnings = new Set();
 
@@ -22,11 +26,16 @@ const printedWarnings = new Set();
  * @param {string} options.path Path relative to the API root, e.g. `/users/me`
  * @param {object} [options.query] Query parameters; array values are sent as repeated parameters
  * @param {object} [options.payload] Request body, sent as JSON
+ * @param {Blob | ArrayBuffer | ArrayBufferView} [options.body] A raw request body, instead of a `payload`, with its
+ *   `Content-Type` in `headers`. It must be re-readable (i.e., not a stream), since it's sent again on a retry.
  * @param {object} [options.headers] Additional request headers
  * @param {boolean} [options.parseResponse=true] Whether to parse the response body (as JSON when it's JSON, text
  *   otherwise). If false, the raw `Response` is returned.
  * @param {RequestCache} [options.cache] The fetch cache mode
  * @param {AbortSignal} [options.signal]
+ * @param {boolean} [options.idempotent=false] Whether the request is safe to repeat, whatever the server did with it
+ *   (e.g., it carries an idempotency key). If so, network failures are retried for any method, as are 408, 429, 500,
+ *   502, 503, and 504 responses, honoring any Retry-After header.
  * @param {string[]} [options.authFailures] Internal: the authentication failures so far
  * @param {number} [options.retryCount] Internal: the number of retries so far
  * @returns {Promise<any>}
@@ -36,10 +45,12 @@ export async function makeRequest({
 	path,
 	query,
 	payload,
+	body: rawBody,
 	headers: extraHeaders,
 	parseResponse = true,
 	cache,
 	signal,
+	idempotent = false,
 	authFailures = [],
 	retryCount = 0,
 }) {
@@ -56,7 +67,7 @@ export async function makeRequest({
 	const url = `${baseUrl}${path}${toQueryString(query)}`;
 	await addDpopProof(headers, { method, url });
 
-	let body;
+	let body = rawBody;
 	if (payload !== undefined) {
 		body = JSON.stringify(payload, jsonReplacer);
 		headers['Content-Type'] = 'application/json';
@@ -68,10 +79,12 @@ export async function makeRequest({
 			path,
 			query,
 			payload,
+			body: rawBody,
 			headers: extraHeaders,
 			parseResponse,
 			cache,
 			signal,
+			idempotent,
 			authFailures,
 			retryCount,
 			...overrides,
@@ -85,16 +98,20 @@ export async function makeRequest({
 			throw e;
 		}
 		// Only idempotent requests are safe to repeat, since we can't know whether the server received the original
-		if ((method === 'GET' || method === 'HEAD') && retryCount < MAX_RETRIES) {
+		if ((method === 'GET' || method === 'HEAD' || idempotent) && retryCount < MAX_RETRIES) {
 			await sleep(retryCount * 1000, signal);
 			return retry({ retryCount: retryCount + 1 });
 		}
 		throw new NetworkError(`${method} ${path} failed`, { cause: e });
 	}
 
-	if (response.status === 503 && retryCount < MAX_RETRIES) {
+	const isRetryableStatus = idempotent
+		? IDEMPOTENT_RETRY_STATUSES.includes(response.status)
+		: response.status === 503;
+	if (isRetryableStatus && retryCount < MAX_RETRIES) {
 		await response.body?.cancel();
-		await sleep(retryCount * 1000, signal);
+		const retryAfter = idempotent ? parseRetryAfter(response) : undefined;
+		await sleep(retryAfter ?? retryCount * 1000, signal);
 		return retry({ retryCount: retryCount + 1 });
 	}
 
@@ -232,6 +249,16 @@ async function parseErrorResponse(response, method) {
 	} catch (e) {
 		return text;
 	}
+}
+
+// The delay a Retry-After header asks for (in seconds, or until a date), in ms, or undefined if there isn't one
+function parseRetryAfter(response) {
+	const value = response.headers.get('retry-after')?.trim();
+	if (!value) {
+		return undefined;
+	}
+	const ms = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+	return Number.isNaN(ms) ? undefined : Math.min(Math.max(ms, 0), MAX_RETRY_AFTER_MS);
 }
 
 // Resolves after `ms`, or rejects as soon as the signal aborts

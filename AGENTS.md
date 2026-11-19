@@ -40,7 +40,9 @@ opens a browser. They take several minutes and create data, so only run them whe
     - `config.js`: the library-wide settings behind `config()`.
     - `references.js`: parsing references like `owner.dataset:v1_0.table`.
     - `readRows.js`, `arrowTypes.js`, `rowsArray.js`: reading tables and queries into Arrow, and converting to rows.
-    - `upload.js`, `download.js`, `files.js`: resumable uploads, verified downloads, and file index listings.
+    - `upload.js`, `imports.js`, `md5.js`: normalizing upload content, and uploading it through an import (in
+      resumable, MD5-verified chunks).
+    - `download.js`, `files.js`: verified downloads, and file index listings.
     - `errors.js`, `jobs.js`, `json.js`, `node.js`, `pool.js`: errors, waiting on jobs, JSON serialization of BigInts and
       Temporal values, Node detection and imports, and a concurrency-limited map.
 - `test/unit/`: tests against a mocked `fetch`, from `helpers.js`.

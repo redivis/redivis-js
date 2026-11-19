@@ -94,6 +94,14 @@ export function setApiProxy(baseUrlArg, options = {}) {
 	apiProxy = options;
 }
 
+// The base URL and headers of requests that carry no credentials, which are a proxy's, if one is set. Its headers are
+//   the caller's, for the proxy, and never hold a Redivis token, so they're sent with every request through it.
+export function getUncredentialedRequestConfig() {
+	return apiProxy
+		? { baseUrl: apiProxy.baseUrl, headers: { ...apiProxy.headers } }
+		: { baseUrl: getApiEndpoint(), headers: {} };
+}
+
 export async function getRequestConfig() {
 	if (apiProxy) {
 		// Copy the headers, since the caller adds to them

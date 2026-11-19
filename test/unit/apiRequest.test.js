@@ -60,6 +60,41 @@ test('retries network failures for idempotent requests only', async () => {
 	assert.equal(attempts, 1);
 });
 
+test('retries idempotent requests on network failures and transient statuses, honoring Retry-After', async () => {
+	const responses = [
+		() => {
+			throw new TypeError('fetch failed');
+		},
+		() => jsonResponse({ error: 'rate_limited' }, { status: 429, headers: { 'retry-after': '0' } }),
+		() => jsonResponse({ error: 'internal' }, { status: 500, headers: { 'retry-after': '0' } }),
+		() => jsonResponse({ ok: true }),
+	];
+	let attempts = 0;
+	const requests = mockFetch(() => responses[attempts++]());
+	const body = new Blob(['bytes']);
+	const res = await makeRequest({
+		method: 'POST',
+		path: '/things',
+		body,
+		headers: { 'Content-Type': 'application/octet-stream' },
+		idempotent: true,
+	});
+	assert.deepEqual(res, { ok: true });
+	assert.equal(attempts, 4);
+	// The raw body is sent as is, on every attempt
+	for (const request of requests) {
+		assert.equal(request.rawBody, body);
+		assert.equal(request.headers['Content-Type'], 'application/octet-stream');
+		assert.equal(request.headers.Authorization, 'Bearer test-token');
+	}
+
+	// Without the flag, only a 503 is retried
+	attempts = 0;
+	mockFetch(() => (attempts++, jsonResponse({ error: 'internal' }, { status: 500 })));
+	await assert.rejects(makeRequest({ method: 'POST', path: '/things', payload: {} }), APIError);
+	assert.equal(attempts, 1);
+});
+
 test('maps error responses to typed errors', async () => {
 	mockFetch(() => jsonResponse({ error: 'not_found', error_description: 'No such table' }, { status: 404 }));
 	await assert.rejects(makeRequest({ path: '/tables/x' }), (e) => {

@@ -7,8 +7,9 @@ import { makePaginatedRequest, makeRequest } from '../common/apiRequest.js';
 import { parseArgs } from '../common/args.js';
 import { getConfigValue } from '../common/config.js';
 import { ValueError } from '../common/errors.js';
+import { createImport, finalizeImport, uploadImportFile, waitForImport } from '../common/imports.js';
 import { mapConcurrent } from '../common/pool.js';
-import { createTempUploads, resolveFiles, uploadToTempUpload } from '../common/upload.js';
+import { resolveFiles } from '../common/upload.js';
 import { definedValues, splitReference } from '../common/references.js';
 
 /** @typedef {import('../common/args.js').ListArgs} ListArgs */
@@ -189,7 +190,7 @@ export default class Table extends TabularReader {
 	}
 
 	/**
-	 * Adds files to a file index table, uploading them in parallel batches.
+	 * Adds files to a file index table, uploading them in parallel, and waits for them to be added.
 	 *
 	 * @param {[options: AddFilesOptions]} args
 	 * @returns {Promise<void>}
@@ -206,6 +207,10 @@ export default class Table extends TabularReader {
 		const resolvedFiles = await resolveFiles({ files, directory });
 		await this._resolveForWrite();
 
+		if (!resolvedFiles.length) {
+			return;
+		}
+
 		const totalBytes = resolvedFiles.reduce((total, { size }) => total + size, 0);
 		const bytesUploadedByFile = new Array(resolvedFiles.length).fill(0);
 		let bytesUploaded = 0;
@@ -213,53 +218,31 @@ export default class Table extends TabularReader {
 		const reportProgress = () =>
 			onProgress?.({ bytesUploaded, totalBytes, filesUploaded, totalFiles: resolvedFiles.length });
 
-		// Files are uploaded in batches (of at most 1000 files, and roughly a target size that adapts to throughput),
-		//   each of which is added to the table once it's uploaded
-		let targetBatchBytes = 1e8;
-		let index = 0;
-		while (index < resolvedFiles.length) {
-			const batchStart = index;
-			let batchBytes = 0;
-			while (index < resolvedFiles.length && index - batchStart < 1000 && batchBytes <= targetBatchBytes) {
-				batchBytes += resolvedFiles[index++].size;
-			}
-			const batch = resolvedFiles.slice(batchStart, index);
-			const startedAt = Date.now();
-
-			const tempUploads = await createTempUploads(this.uri, batch, { signal });
-			await mapConcurrent(
-				batch,
-				maxParallelization,
-				async (file, i) => {
-					const fileIndex = batchStart + i;
-					await uploadToTempUpload(tempUploads[i], file, {
-						signal,
-						onProgress: (bytes) => {
-							bytesUploaded += bytes - bytesUploadedByFile[fileIndex];
-							bytesUploadedByFile[fileIndex] = bytes;
-							reportProgress();
-						},
-					});
-				},
-				{ signal },
-			);
-
-			await makeRequest({
-				method: 'POST',
-				path: `${this.uri}/rawFiles`,
-				signal,
-				payload: { files: batch.map(({ name }, i) => ({ name, tempUploadId: tempUploads[i].id })) },
-			});
-			filesUploaded += batch.length;
-			reportProgress();
-
-			const elapsed = Date.now() - startedAt;
-			if (elapsed > 60_000) {
-				targetBatchBytes /= 2;
-			} else if (elapsed < 15_000) {
-				targetBatchBytes *= 2;
-			}
-		}
+		// The files are uploaded to a single import, which adds them all to the table once it's finalized
+		let dataImport = await createImport(
+			this.uri,
+			{ totalFileCount: resolvedFiles.length, totalSize: totalBytes },
+			{ signal },
+		);
+		await mapConcurrent(
+			resolvedFiles,
+			maxParallelization,
+			async (file, fileIndex) => {
+				await uploadImportFile(dataImport, file.name, file, {
+					signal,
+					onProgress: (bytes) => {
+						bytesUploaded += bytes - bytesUploadedByFile[fileIndex];
+						bytesUploadedByFile[fileIndex] = bytes;
+						reportProgress();
+					},
+				});
+				filesUploaded++;
+				reportProgress();
+			},
+			{ signal },
+		);
+		dataImport = await finalizeImport(dataImport, { signal });
+		await waitForImport(dataImport, { kind: 'import', signal });
 	}
 
 	/**

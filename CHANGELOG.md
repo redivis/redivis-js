@@ -5,6 +5,16 @@ Each release's section here becomes its notes on [GitHub](https://github.com/red
 
 ## Unreleased
 
+### Changes
+
+- Uploads (`upload.create()` for files, data, and transfers, and `table.addFiles()`) now use the Redivis imports API.
+  Files are uploaded in resumable chunks with MD5 verification, and requests are retried on transient errors. Stream
+  uploads are unchanged.
+- `table.addFiles()` adds all of its files in a single import, and now waits for them to be added to the table,
+  throwing a `JobError` if that fails. Its progress counts each file as uploaded once it's sent, rather than in batches.
+- A transfer's `transferSpecification` can include `identity`, the email of the integration account to access the
+  source through.
+
 ## 0.4.2
 
 ### Fixes

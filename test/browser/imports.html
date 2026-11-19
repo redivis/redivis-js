@@ -1,0 +1,133 @@
+<html>
+	<!--
+		Manual check of uploads from a browser, against local dev: run `npm run test:browser`, open
+		http://127.0.0.1:9000/test/browser/imports.html, and click Run. The page is served from another origin than the
+		API, so this covers CORS on the import routes, and (since the browser login binds its token to a key) DPoP on them.
+		It creates a dataset in the `demo` organization, and deletes it when done.
+	-->
+	<meta charset="utf-8" />
+	<script type="importmap">
+		{
+			"imports": {
+				"apache-arrow": "https://esm.sh/apache-arrow@21.2.0",
+				"temporal-polyfill": "https://esm.sh/temporal-polyfill@1.0.5"
+			}
+		}
+	</script>
+	<body>
+		<button id="run">Run</button>
+		<pre id="output"></pre>
+		<script type="module">
+			import * as redivis from '../../index.js';
+
+			const API_ENDPOINT = 'https://local.host:8443/api/v1';
+			const OWNER = 'demo';
+			redivis.config({ apiEndpoint: API_ENDPOINT });
+			window.redivis = redivis;
+
+			const output = document.getElementById('output');
+			const log = (...values) => {
+				console.log(...values);
+				output.textContent += `${values.map((v) => (typeof v === 'string' ? v : JSON.stringify(v))).join(' ')}\n`;
+			};
+
+			// Records the requests to the API, to report how they were authorized and how the import routes answered
+			const requests = [];
+			const originalFetch = window.fetch.bind(window);
+			window.fetch = async (input, init = {}) => {
+				const url = typeof input === 'string' ? input : input.url;
+				const headers = new Headers(init.headers ?? (typeof input === 'string' ? undefined : input.headers));
+				const record = {
+					method: init.method ?? 'GET',
+					path: url.startsWith(API_ENDPOINT) ? url.slice(API_ENDPOINT.length).split('?')[0] : url,
+					scheme: headers.get('Authorization')?.split(' ')[0] ?? null,
+					hasDpopProof: headers.has('DPoP'),
+				};
+				requests.push(record);
+				try {
+					const response = await originalFetch(input, init);
+					record.status = response.status;
+					return response;
+				} catch (e) {
+					record.status = `network error: ${e.message}`;
+					throw e;
+				}
+			};
+
+			const check = async (name, fn) => {
+				try {
+					log(`✔ ${name}:`, await fn());
+					return true;
+				} catch (e) {
+					log(`✖ ${name}: ${e.name}: ${e.message}`);
+					return false;
+				}
+			};
+
+			function csv(numRows) {
+				const lines = ['id,name,value'];
+				for (let i = 0; i < numRows; i++) {
+					lines.push(`${i},row number ${i} of the upload,${i / 7}`);
+				}
+				return new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+			}
+
+			document.getElementById('run').addEventListener('click', async () => {
+				output.textContent = '';
+				// Logging in opens a popup, which a browser allows only in response to a click
+				if (!(await check('authorize', () => redivis.authorize({ scope: ['data.edit'] })))) return;
+
+				const dataset = redivis.organization(OWNER).dataset(`jsbrowser_${Date.now()}`);
+				if (!(await check('create dataset', async () => (await dataset.create()).qualifiedReference))) return;
+				try {
+					await check('upload a small CSV (one request)', async () => {
+						const table = await dataset.table('small').create();
+						const upload = await table.upload('small.csv').create(csv(3));
+						return { status: upload.properties.status, numRows: upload.properties.numRows };
+					});
+					await check('upload a 40MB CSV (an upload session, in chunks)', async () => {
+						const table = await dataset.table('large').create();
+						const content = csv(700_000);
+						const upload = await table.upload('large.csv').create(content);
+						return {
+							size: content.size,
+							status: upload.properties.status,
+							numRows: upload.properties.numRows,
+						};
+					});
+					await check("a failed upload reports the server's reason (expect it to say why)", async () => {
+						const table = await dataset.table('bad').create();
+						try {
+							await table.upload('bad.csv').create(new Blob(['a,b\n1,2\n3\n']));
+							return 'no error was raised';
+						} catch (e) {
+							return `${e.name}: ${e.message.slice(0, 160)}`;
+						}
+					});
+					await check('add files to a file index table', async () => {
+						const table = await dataset.table('files').create({ isFileIndex: true });
+						await table.addFiles({
+							files: [
+								new File(['hello'], 'hello.txt'),
+								new File([new Uint8Array(40 * 2 ** 20)], 'zeros.bin'),
+								new File(['ünïcödé'], 'ünïcödé name.txt'),
+							],
+						});
+						return (await table.listFiles()).map((file) => file.name).sort();
+					});
+				} finally {
+					await check('delete dataset', () => dataset.delete());
+				}
+
+				const importRequests = requests.filter(({ path }) => path.includes('/imports'));
+				log('\nRequests to the import routes:');
+				for (const { method, path, scheme, hasDpopProof, status } of importRequests) {
+					log(`  ${status}  ${method} ${path}  ${scheme ?? 'no auth'}${hasDpopProof ? ' + proof' : ''}`);
+				}
+				const schemes = [...new Set(requests.filter(({ scheme }) => scheme).map(({ scheme }) => scheme))];
+				log(`\nAuthorization schemes used: ${schemes.join(', ') || 'none'} (expect DPoP)`);
+				log('Done');
+			});
+		</script>
+	</body>
+</html>
