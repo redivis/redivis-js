@@ -756,3 +756,24 @@ test("the browser's MD5 matches Node's", () => {
 		assert.equal(bytesToBase64(hash.digest()), md5(data), `size ${size}`);
 	}
 });
+
+// Last, since a proxy can't be unset
+test("chunks sent to an upload session through an API proxy carry the proxy's headers", async () => {
+	redivis.setApiProxy('https://proxy.test/api/v1', { headers: { 'X-Proxy-Key': 'k' } });
+	const data = new Uint8Array(100 * KiB).map((_, i) => i % 251);
+	const { requests, state } = mockImports();
+
+	await table()
+		.upload('big.bin')
+		.create(new Blob([data]), { type: 'parquet' });
+
+	assert.deepEqual(state.files['big.bin'], data);
+	const puts = requests.filter(isSessionPut);
+	assert.ok(puts.length > 1);
+	for (const put of puts) {
+		assert.ok(put.url.href.startsWith('https://proxy.test/api/v1/imports/imp0/files/'));
+		assert.equal(put.headers['X-Proxy-Key'], 'k');
+		assert.equal(put.headers.Authorization, undefined);
+		assert.equal(put.headers.DPoP, undefined);
+	}
+});

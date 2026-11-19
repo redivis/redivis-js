@@ -1,5 +1,5 @@
 import { makeRequest, sleep } from './apiRequest.js';
-import { getRequestBaseUrl } from './auth.js';
+import { getUncredentialedRequestConfig } from './auth.js';
 import { APIError, JobError, NetworkError } from './errors.js';
 import { bytesToBase64, createMd5Hash } from './md5.js';
 import { definedValues } from './references.js';
@@ -111,7 +111,7 @@ async function uploadThroughSession(fileUri, { source, size }, { md5Hash, onProg
 		});
 		return session.uri;
 	};
-	const baseUrl = getRequestBaseUrl();
+	const { baseUrl, headers } = getUncredentialedRequestConfig();
 
 	let sessionUri = await openSession();
 	let sessionReplacements = 0;
@@ -127,6 +127,7 @@ async function uploadThroughSession(fileUri, { source, size }, { md5Hash, onProg
 		let nowCommitted;
 		try {
 			nowCommitted = await putToSession(`${baseUrl}${sessionUri}`, size, {
+				headers,
 				// A status query, with no body, asks the session how much it has
 				range: start === null ? `bytes */${size}` : `bytes ${start}-${end - 1}/${size}`,
 				body: start === null ? undefined : await source.read(start, end),
@@ -197,9 +198,14 @@ async function uploadThroughSession(fileUri, { source, size }, { md5Hash, onProg
 }
 
 // Sends a chunk (or a status query) to an upload session, returning the number of bytes it has committed. No
-//   credentials are sent, deliberately.
-async function putToSession(url, size, { range, body, signal }) {
-	const response = await fetch(url, { method: 'PUT', headers: { 'Content-Range': range }, body, signal });
+//   credentials are sent, deliberately, but an API proxy's headers are, since the request goes through it.
+async function putToSession(url, size, { headers, range, body, signal }) {
+	const response = await fetch(url, {
+		method: 'PUT',
+		headers: { ...headers, 'Content-Range': range },
+		body,
+		signal,
+	});
 	// Complete
 	if (response.status === 200 || response.status === 201) {
 		await response.body?.cancel();
