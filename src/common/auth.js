@@ -94,6 +94,11 @@ export function setApiProxy(baseUrlArg, options = {}) {
 	apiProxy = options;
 }
 
+// The base URL that API requests are sent to (a proxy's, if one is set), for requests that carry no credentials
+export function getRequestBaseUrl() {
+	return apiProxy ? apiProxy.baseUrl : getApiEndpoint();
+}
+
 export async function getRequestConfig() {
 	if (apiProxy) {
 		// Copy the headers, since the caller adds to them

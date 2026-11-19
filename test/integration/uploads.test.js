@@ -348,18 +348,18 @@ describe('uploads', { skip, concurrency: true }, () => {
 	});
 
 	test('a large upload goes through a resumable upload', async (t) => {
-		// Content over 8MB is uploaded resumably, in chunks
+		// Content over 32MiB is uploaded through an upload session, in chunks
 		const table = await createTable(t);
-		const content = largeCsv(250_000);
-		assert.ok(content.length > 2 ** 23);
+		const content = largeCsv(1_000_000);
+		assert.ok(content.length > 32 * 2 ** 20);
 		let progressReports = 0;
 
 		const upload = await table.upload('large.csv').create(new Blob([content]), {
 			onProgress: () => progressReports++,
 		});
 
-		assert.equal(upload.properties.numRows, 250_000);
-		assert.equal((await table.get()).properties.numRows, 250_000);
+		assert.equal(upload.properties.numRows, 1_000_000);
+		assert.equal((await table.get()).properties.numRows, 1_000_000);
 		assert.ok(progressReports >= 2);
 	});
 

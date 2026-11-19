@@ -1,22 +1,13 @@
-import { makeRequest, sleep } from './apiRequest.js';
 import { isPlainObject } from './args.js';
-import { APIError, NetworkError, ValueError } from './errors.js';
+import { ValueError } from './errors.js';
 import { importNodeModule, requireNode } from './node.js';
 import { jsonReplacer } from './json.js';
 import { toRowsArray } from './rowsArray.js';
 import { Table as ArrowTable } from 'apache-arrow';
 
-// Larger uploads use GCS's resumable protocol, in chunks, so that they can be resumed and report progress
-export const RESUMABLE_UPLOAD_MIN_BYTES = 2 ** 23; // 8MB
-// Chunk sizes adapt to throughput. GCS requires them to be multiples of 256KiB.
-const MIN_CHUNK_BYTES = 2 ** 20; // 1MB
-const START_CHUNK_BYTES = 2 ** 23; // 8MB
-const MAX_CHUNK_BYTES = 2 ** 27; // 128MB
-const MAX_RETRIES = 10;
-
 /**
  * Normalizes the content of an upload or file to `{ source, size, name, type }`, where `source.read(start, end)` reads
- * a range of its bytes.
+ * a range of its bytes, and `source.rereadable` is whether any range can be read again (which a stream's can't).
  *
  * Accepts a Blob or File; an ArrayBuffer or typed array; a ReadableStream (with `size`); a file path (in Node); or
  * tabular data (an array of row objects, or an arrow Table), which is serialized as newline-delimited JSON.
@@ -64,7 +55,7 @@ async function toNdjsonBlob(data) {
 }
 
 function blobSource(blob) {
-	return { read: async (start, end) => blob.slice(start, end) };
+	return { read: async (start, end) => blob.slice(start, end), rereadable: true };
 }
 
 // Reads a stream as consecutive ranges. Data before the most recent range is discarded, but the current range is kept,
@@ -75,6 +66,7 @@ function streamSource(stream, size) {
 	let bufferStart = 0;
 
 	return {
+		rereadable: false,
 		async read(start, end) {
 			if (start < bufferStart) {
 				throw new ValueError("Can't re-read data that was already discarded from the stream");
@@ -96,181 +88,6 @@ function streamSource(stream, size) {
 			return buffer.slice(0, end - start);
 		},
 	};
-}
-
-/**
- * Creates temporary upload locations for files of the given sizes, within a table.
- * @returns {Promise<{id: string, url: string, resumable: boolean}[]>}
- */
-export async function createTempUploads(tableUri, files, { signal } = {}) {
-	const { results } = await makeRequest({
-		method: 'POST',
-		path: `${tableUri}/tempUploads`,
-		signal,
-		payload: {
-			tempUploads: files.map(({ size, name }) => ({
-				size,
-				name: name || randomId(),
-				resumable: size > RESUMABLE_UPLOAD_MIN_BYTES,
-			})),
-		},
-	});
-	return results;
-}
-
-/**
- * Uploads content to a temporary upload location, as returned by createTempUploads().
- *
- * @param {{url: string, resumable: boolean}} tempUpload
- * @param {{source: object, size: number}} content
- * @param {object} [options]
- * @param {(bytesUploaded: number) => void} [options.onProgress] Called with the total number of bytes uploaded so far
- * @param {AbortSignal} [options.signal]
- */
-export async function uploadToTempUpload(tempUpload, content, { onProgress, signal } = {}) {
-	if (tempUpload.resumable) {
-		await resumableUpload(tempUpload.url, content, { onProgress, signal });
-	} else {
-		await withRetries(async () => {
-			const body = await content.source.read(0, content.size);
-			const res = await fetch(tempUpload.url, { method: 'PUT', body, signal });
-			await checkUploadResponse(res);
-		}, signal);
-	}
-	onProgress?.(content.size);
-}
-
-async function resumableUpload(url, { source, size }, { onProgress, signal }) {
-	let sessionUrl = await withRetries(() => initiateResumableUpload(url, size, signal), signal);
-	let start = 0;
-	let chunkSize = START_CHUNK_BYTES;
-	let retryCount = 0;
-
-	while (true) {
-		if (start >= size) {
-			return;
-		}
-		const end = Math.min(start + chunkSize, size);
-		const startedAt = Date.now();
-		let committed;
-		try {
-			const res = await fetch(sessionUrl, {
-				method: 'PUT',
-				headers: { 'Content-Range': `bytes ${start}-${end - 1}/${size}` },
-				body: await source.read(start, end),
-				signal,
-			});
-			committed = await getCommittedBytes(res, size);
-		} catch (e) {
-			if (signal?.aborted || !isRetryable(e)) throw e;
-			if (++retryCount > MAX_RETRIES) {
-				throw new NetworkError(`Upload failed after ${MAX_RETRIES} retries`, { cause: e });
-			}
-			await sleep(retryCount * 1000, signal);
-			chunkSize = Math.max(MIN_CHUNK_BYTES, chunkSize / 2);
-			// Ask GCS how much it received, and continue from there
-			try {
-				const res = await fetch(sessionUrl, {
-					method: 'PUT',
-					headers: { 'Content-Range': `bytes */${size}` },
-					signal,
-				});
-				committed = await getCommittedBytes(res, size);
-			} catch (probeError) {
-				if (signal?.aborted) throw probeError;
-				if (probeError.status === 404 || probeError.status === 410) {
-					// The upload session expired, so start a new one
-					sessionUrl = await withRetries(() => initiateResumableUpload(url, size, signal), signal);
-					committed = 0;
-				} else {
-					// Try the probe again on the next iteration
-					committed = start;
-				}
-			}
-			start = committed;
-			continue;
-		}
-
-		retryCount = 0;
-		start = committed;
-		if (start < size) {
-			onProgress?.(start);
-		}
-		const elapsed = Date.now() - startedAt;
-		if (elapsed > 8000 && chunkSize > MIN_CHUNK_BYTES) {
-			chunkSize /= 2;
-		} else if (elapsed < 4000 && chunkSize < MAX_CHUNK_BYTES) {
-			chunkSize *= 2;
-		}
-	}
-}
-
-// Starts a resumable upload session, returning its URL
-async function initiateResumableUpload(url, size, signal) {
-	const res = await fetch(url, {
-		method: 'POST',
-		headers: { 'x-goog-resumable': 'start', 'x-upload-content-length': String(size) },
-		signal,
-	});
-	await checkUploadResponse(res);
-	const location = res.headers.get('location');
-	if (!location) {
-		throw new NetworkError(
-			"The upload session couldn't be started, since its location wasn't readable (this may be a CORS issue)",
-		);
-	}
-	return new URL(location, url).href;
-}
-
-// How many bytes of a resumable upload GCS has committed, given its response to a chunk or a status check: the whole
-//   upload when it's complete (200/201), or the end of the Range header when it's incomplete (308)
-async function getCommittedBytes(res, size) {
-	if (res.status === 200 || res.status === 201) {
-		await res.body?.cancel();
-		return size;
-	}
-	if (res.status === 308) {
-		await res.body?.cancel();
-		const range = res.headers.get('range');
-		// GCS omits the header if it hasn't received any bytes
-		return range ? Number(range.match(/bytes=0-(\d+)/)[1]) + 1 : 0;
-	}
-	await checkUploadResponse(res);
-	throw new NetworkError(`Unexpected response status ${res.status} for a resumable upload`);
-}
-
-async function checkUploadResponse(res) {
-	if (res.ok) {
-		await res.body?.cancel();
-		return;
-	}
-	throw new APIError({ status: res.status, code: 'upload_failed', description: await res.text() });
-}
-
-function isRetryable(e) {
-	if (e instanceof APIError) {
-		return e.status === 408 || e.status === 429 || e.status >= 500;
-	}
-	// Network failures surface as TypeErrors from fetch
-	return e instanceof TypeError || e instanceof NetworkError;
-}
-
-async function withRetries(fn, signal) {
-	for (let retryCount = 0; ; retryCount++) {
-		try {
-			return await fn();
-		} catch (e) {
-			if (signal?.aborted || !isRetryable(e)) throw e;
-			if (retryCount >= MAX_RETRIES) {
-				throw new NetworkError(`Upload failed after ${MAX_RETRIES} retries`, { cause: e });
-			}
-			await sleep((retryCount + 1) * 1000, signal);
-		}
-	}
-}
-
-export function randomId() {
-	return globalThis.crypto.randomUUID();
 }
 
 // Resolves the files to add to a file index table, from a local directory (in Node) or a list of file specifications
